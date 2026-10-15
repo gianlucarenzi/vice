@@ -52,6 +52,15 @@ static unsigned int  vera_line_version[VERA_H];
  * data, palette and sprites only re-renders the lines that read it. */
 static ULONG         vera_line_lo[2][VERA_H];
 static ULONG         vera_line_hi[2][VERA_H];
+/* VRAM in 512-byte buckets: for each bucket the lines whose ranges above
+ * touch it, so a VRAM write only checks those lines */
+#define VERA_BUCKET_SHIFT 9
+#define VERA_BUCKETS      (0x20000u >> VERA_BUCKET_SHIFT)
+#define VERA_LINE_WORDS   ((VERA_H + 31) / 32)
+static uint32_t      vera_bucket_lines[VERA_BUCKETS][VERA_LINE_WORDS];
+/* vera_fb changed since the last VERA_VIDEO_Frame(): an unchanged picture
+ * is not handed to the UI again */
+static int           vera_fb_dirty = 1;
 /* integer window size multiplier, for high-DPI screens (the UI reads it) */
 static int           vera_scale = 1;
 
@@ -348,7 +357,33 @@ static void render_sprites(UBYTE *col_row, UBYTE *z_row, const UBYTE *vram,
     }
 }
 
-static void render_scanline_range(int py, int xstart, int xend)
+/* set or clear line py in the buckets of the VRAM range [lo, hi] */
+static void vera_bucket_mark(int py, ULONG lo, ULONG hi, int set)
+{
+    uint32_t bit = 1u << (py & 31);
+    int word = py >> 5;
+    ULONG b, last;
+
+    if (lo > hi || lo > 0x1FFFFu)
+        return;
+    if (hi > 0x1FFFFu)
+        hi = 0x1FFFFu;
+    last = hi >> VERA_BUCKET_SHIFT;
+    for (b = lo >> VERA_BUCKET_SHIFT; b <= last; b++) {
+        if (set)
+            vera_bucket_lines[b][word] |= bit;
+        else
+            vera_bucket_lines[b][word] &= ~bit;
+    }
+}
+
+static void vera_line_buckets(int py, int set)
+{
+    vera_bucket_mark(py, vera_line_lo[0][py], vera_line_hi[0][py], set);
+    vera_bucket_mark(py, vera_line_lo[1][py], vera_line_hi[1][py], set);
+}
+
+static void render_scanline_range_inner(int py, int xstart, int xend)
 {
     VERA_RegSnap rs;
     const UBYTE *vram;
@@ -391,6 +426,7 @@ static void render_scanline_range(int py, int xstart, int xend)
 
     /* a full render records afresh what the layers read; a partial one
      * (mid-line change) adds to it */
+    vera_fb_dirty = 1;
     if (start == 0 && end == VERA_W) {
         vera_line_lo[0][py] = vera_line_lo[1][py] = 0xFFFFFFFFu;
         vera_line_hi[0][py] = vera_line_hi[1][py] = 0;
@@ -443,6 +479,16 @@ static void render_scanline_range(int py, int xstart, int xend)
     }
 }
 
+/* the line's ranges change while it renders: keep the buckets in step */
+static void render_scanline_range(int py, int xstart, int xend)
+{
+    if (py < 0 || py >= VERA_H)
+        return;
+    vera_line_buckets(py, 0);
+    render_scanline_range_inner(py, xstart, xend);
+    vera_line_buckets(py, 1);
+}
+
 /* ------------------------------------------------------------------
  * VRAM write: which lines does it change?
  * ------------------------------------------------------------------ */
@@ -455,7 +501,8 @@ int VERA_VIDEO_VramWrite(ULONG lo, ULONG hi)
 {
     VERA_RegSnap rs;
     UBYTE video;
-    int layer, py;
+    int layer, py, w;
+    ULONG b, last;
 
     vera_core_get_regsnap(&rs);
     video = rs.dc[0][0];
@@ -483,11 +530,19 @@ int VERA_VIDEO_VramWrite(ULONG lo, ULONG hi)
 
     /* map or bitmap rows: only the lines that read them (a line that was not
      * rendered since a register change is out of date anyway) */
-    for (py = 0; py < VERA_H; py++) {
-        for (layer = 0; layer < 2; layer++) {
-            if (vera_ranges_overlap(lo, hi, vera_line_lo[layer][py], vera_line_hi[layer][py])) {
-                vera_line_version[py] = 0;
-                break;
+    if (lo > 0x1FFFFu)
+        return 0;
+    last = (hi > 0x1FFFFu ? 0x1FFFFu : hi) >> VERA_BUCKET_SHIFT;
+    for (b = lo >> VERA_BUCKET_SHIFT; b <= last; b++) {
+        for (w = 0; w < VERA_LINE_WORDS; w++) {
+            uint32_t m = vera_bucket_lines[b][w];
+
+            while (m != 0u) {
+                py = w * 32 + __builtin_ctz(m);
+                m &= m - 1u;
+                if (vera_ranges_overlap(lo, hi, vera_line_lo[0][py], vera_line_hi[0][py])
+                    || vera_ranges_overlap(lo, hi, vera_line_lo[1][py], vera_line_hi[1][py]))
+                    vera_line_version[py] = 0;
             }
         }
     }
@@ -504,8 +559,10 @@ void VERA_VIDEO_Reset(void)
     memset(vera_sprite_z_fb, 0, sizeof(vera_sprite_z_fb));
     memset(vera_fb, 0, sizeof(vera_fb));
     memset(vera_line_version, 0, sizeof(vera_line_version));
+    vera_fb_dirty = 1;
     memset(vera_line_lo, 0xFF, sizeof(vera_line_lo));
     memset(vera_line_hi, 0, sizeof(vera_line_hi));
+    memset(vera_bucket_lines, 0, sizeof(vera_bucket_lines));
 }
 
 void VERA_VIDEO_Scanline(UWORD scanline)
@@ -554,6 +611,7 @@ void VERA_VIDEO_Recolor(UWORD scanline, UWORD xstart)
     if (end <= start)
         return;
 
+    vera_fb_dirty = 1;
     row = (size_t)py * VERA_W;
     for (int px = start; px < end; px++) {
         int inside = (py >= ay0 && py < ay1 && px >= ax0 && px < ax1);
@@ -576,8 +634,9 @@ void VERA_VIDEO_Midline(UWORD scanline, UWORD xstart)
 
 void VERA_VIDEO_Frame(void)
 {
-    if (!vera_core_enabled)
+    if (!vera_core_enabled || !vera_fb_dirty)
         return;
+    vera_fb_dirty = 0;
     vera_host_frame(vera_fb, VERA_W, VERA_H);
 }
 

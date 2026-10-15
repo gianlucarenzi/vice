@@ -48,6 +48,8 @@ static GtkWidget *vera_area = NULL;
 /* the last frame, written by the emulation thread, read by the UI thread */
 static GMutex frame_lock;
 static uint32_t frame[VERA_WIDTH * VERA_HEIGHT];
+/* the copy on_draw() paints from: the emulation thread never waits for cairo */
+static uint32_t draw_frame[VERA_WIDTH * VERA_HEIGHT];
 static int frame_redraw_pending = 0;   /* an idle redraw is queued */
 static int card_enabled = 0;           /* the card is in: the window is shown */
 
@@ -70,7 +72,10 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data)
     oy = (h - VERA_HEIGHT * scale) / 2.0;
 
     g_mutex_lock(&frame_lock);
-    surface = cairo_image_surface_create_for_data((unsigned char *)frame, CAIRO_FORMAT_RGB24,
+    memcpy(draw_frame, frame, sizeof(draw_frame));
+    g_mutex_unlock(&frame_lock);
+
+    surface = cairo_image_surface_create_for_data((unsigned char *)draw_frame, CAIRO_FORMAT_RGB24,
                                                   VERA_WIDTH, VERA_HEIGHT, VERA_WIDTH * 4);
     cairo_translate(cr, ox, oy);
     cairo_scale(cr, scale, scale);
@@ -79,7 +84,6 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data)
     cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_NEAREST);
     cairo_paint(cr);
     cairo_surface_destroy(surface);
-    g_mutex_unlock(&frame_lock);
     return TRUE;
 }
 
