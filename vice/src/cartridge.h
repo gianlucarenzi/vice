@@ -169,6 +169,7 @@ void cartridge_sound_chip_init(void);
 #define CARTRIDGE_C64_256K           -122 /* c64_256k.c */
 #define CARTRIDGE_CPM                -123 /* cpmcart.c */
 #define CARTRIDGE_DEBUGCART          -124 /* debugcart.c */
+#define CARTRIDGE_VERA               -125 /* vera.c, vera_core.c, vera_video.c */
 
 /* Known cartridge types.  */
 /* TODO: cartconv (4k and 12k binaries) */
@@ -317,6 +318,7 @@ void cartridge_sound_chip_init(void);
 #define CARTRIDGE_NAME_DIGIMAX            "DigiMAX" /* http://starbase.globalpc.net/~ezekowitz/vanessa/hobbies/projects.html */
 #define CARTRIDGE_NAME_DINAMIC            "Dinamic"
 #define CARTRIDGE_NAME_DQBB               "Double Quick Brown Box" /* on the cart itself its all uppercase ? */
+#define CARTRIDGE_NAME_VERA               "VERA video card"
 #define CARTRIDGE_NAME_DS12C887RTC        "DS12C887 Real Time Clock" /* Title of the page at http://ytm.bossstation.dnsalias.org/html/rtcds12c887.html */
 #define CARTRIDGE_NAME_EASYCALC           "Easy Calc Result" /* on the cart itself it's "Calc Result EASY", in the manual it's EASYCALC, but we'll go with what is defined ;) */
 #define CARTRIDGE_NAME_EASYFLASH          "EasyFlash" /* see http://skoe.de/easyflash/ */

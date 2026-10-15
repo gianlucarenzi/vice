@@ -85,6 +85,7 @@
 #include "dqbb.h"
 #include "drean.h"
 #include "ds12c887rtc.h"
+#include "vera.h"
 #include "easycalc.h"
 #include "easyflash.h"
 #include "epyxfastload.h"
@@ -194,6 +195,7 @@ extern export_t export_passthrough; /* slot1 and main combined, goes into slot0 
 
         CARTRIDGE_DIGIMAX
         CARTRIDGE_DS12C887RTC
+        CARTRIDGE_VERA
         CARTRIDGE_SFX_SOUND_EXPANDER
         CARTRIDGE_SFX_SOUND_SAMPLER
         CARTRIDGE_MIDI_PASSPORT
@@ -523,6 +525,7 @@ int cart_cmdline_options_init(void)
 #endif
         || digimax_cmdline_options_init() < 0
         || ds12c887rtc_cmdline_options_init() < 0
+        || vera_cmdline_options_init() < 0
         || georam_cmdline_options_init() < 0
         || reu_cmdline_options_init() < 0
         || sfx_soundexpander_cmdline_options_init() < 0
@@ -585,6 +588,7 @@ int cart_resources_init(void)
         /* "IO Slot" */
         || digimax_resources_init() < 0
         || ds12c887rtc_resources_init() < 0
+        || vera_resources_init() < 0
         || georam_resources_init() < 0
 #ifdef HAVE_MIDI
         || c64_midi_resources_init() < 0
@@ -636,6 +640,7 @@ void cart_resources_shutdown(void)
     /* "IO Slot" */
     digimax_resources_shutdown();
     ds12c887rtc_resources_shutdown();
+    vera_resources_shutdown();
     georam_resources_shutdown();
 #ifdef HAVE_MIDI
     midi_resources_shutdown();
@@ -703,6 +708,7 @@ int cart_is_slotmain(int type)
         /* io slot */
         case CARTRIDGE_DIGIMAX:
         case CARTRIDGE_DS12C887RTC:
+        case CARTRIDGE_VERA:
         case CARTRIDGE_GEORAM:
         case CARTRIDGE_MIDI_PASSPORT:
         case CARTRIDGE_MIDI_DATEL:
@@ -792,6 +798,8 @@ int cart_type_enabled(int type)
             return digimax_cart_enabled();
         case CARTRIDGE_DS12C887RTC:
             return ds12c887rtc_cart_enabled();
+        case CARTRIDGE_VERA:
+            return vera_cart_enabled();
         case CARTRIDGE_GEORAM:
             return georam_cart_enabled();
         case CARTRIDGE_CPM:
@@ -862,6 +870,7 @@ const char *cart_get_filename_by_type(int type)
         /* the following have no associated file */
         case CARTRIDGE_DIGIMAX:
         case CARTRIDGE_DS12C887RTC:
+        case CARTRIDGE_VERA:
 #ifdef HAVE_MIDI
         case CARTRIDGE_MIDI_PASSPORT:
         case CARTRIDGE_MIDI_DATEL:
@@ -1506,6 +1515,9 @@ int cartridge_enable(int type)
         case CARTRIDGE_DS12C887RTC:
             ds12c887rtc_enable();
             break;
+        case CARTRIDGE_VERA:
+            vera_enable();
+            break;
         case CARTRIDGE_GEORAM:
             georam_enable();
             break;
@@ -1607,6 +1619,9 @@ int cartridge_disable(int type)
         case CARTRIDGE_DS12C887RTC:
             ds12c887rtc_disable();
             break;
+        case CARTRIDGE_VERA:
+            vera_disable();
+            break;
         case CARTRIDGE_GEORAM:
             georam_disable();
             break;
@@ -1682,6 +1697,7 @@ void cart_detach_all(void)
     /* "io Slot" */
     digimax_detach();
     ds12c887rtc_detach();
+    vera_detach();
     georam_detach();
 #ifdef HAVE_MIDI
     c64_midi_detach();
@@ -1747,6 +1763,9 @@ void cart_detach(int type)
             break;
         case CARTRIDGE_DS12C887RTC:
             ds12c887rtc_detach();
+            break;
+        case CARTRIDGE_VERA:
+            vera_detach();
             break;
         case CARTRIDGE_GEORAM:
             georam_detach();
@@ -2054,6 +2073,7 @@ void cart_init(void)
     /* "IO Slot" */
     /* digimax */
     /* ds12c887rtc */
+    vera_init();
     georam_init();
 #ifdef HAVE_MIDI
     midi_init();
@@ -2399,6 +2419,9 @@ void cartridge_reset(void)
     }
     if (ds12c887rtc_cart_enabled()) {
         ds12c887rtc_reset();
+    }
+    if (vera_cart_enabled()) {
+        vera_reset();
     }
     if (georam_cart_enabled()) {
         georam_reset();
@@ -3846,6 +3869,11 @@ int cartridge_snapshot_write_modules(struct snapshot_s *s)
                         return -1;
                     }
                     break;
+                case CARTRIDGE_VERA:
+                    if (vera_snapshot_write_module(s) < 0) {
+                        return -1;
+                    }
+                    break;
                 case CARTRIDGE_GEORAM:
                     if (georam_write_snapshot_module(s) < 0) {
                         return -1;
@@ -4468,6 +4496,11 @@ int cartridge_snapshot_read_modules(struct snapshot_s *s)
                     break;
                 case CARTRIDGE_DS12C887RTC:
                     if (ds12c887rtc_snapshot_read_module(s) < 0) {
+                        goto fail2;
+                    }
+                    break;
+                case CARTRIDGE_VERA:
+                    if (vera_snapshot_read_module(s) < 0) {
                         goto fail2;
                     }
                     break;

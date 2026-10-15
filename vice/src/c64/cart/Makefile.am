@@ -240,6 +240,13 @@ libc64commoncart_a_SOURCES = \
 	digimax.h \
 	ds12c887rtc.c \
 	ds12c887rtc.h \
+	vera.c \
+	vera.h \
+	vera_compat.h \
+	vera_core.c \
+	vera_core.h \
+	vera_video.c \
+	vera_video.h \
 	ethernetcart.c \
 	ethernetcart.h \
 	georam.c \

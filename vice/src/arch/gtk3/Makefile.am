@@ -113,6 +113,7 @@ libarch_a_SOURCES = \
 	uistatusbar.c \
 	uitapeattach.c \
 	uitapecreate.c \
+	uivera.c \
 	uivideo.c \
 	uivsidmenu.c \
 	uivsidwindow.c \
