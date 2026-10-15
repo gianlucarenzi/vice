@@ -32,8 +32,9 @@
     card) on the expansion port: its 32 registers in IO1 ($DE00-$DE1F,
     images up to $DEFF, the card decodes A0-A4 and /IO1) or in IO2
     ($DF00-$DF1F), its IRQ output on /IRQ. The picture has its own window,
-    the VERA runs free at 31468.75 lines per second (59.94 Hz), asynchronous
-    to the C64.
+    the VERA runs free on its own 25 MHz clock, asynchronous to the C64:
+    VGA at 59.52 Hz, NTSC composite at 59.97 Hz (59.86 Hz in 240p), while
+    the C64 runs at 50.12 Hz (PAL) or 59.83 Hz (NTSC).
 
     The chip is the one of the VeraX16 PBI card of atari800 (vera_core.c,
     vera_video.c); this file is the bus of the C64.
@@ -66,8 +67,9 @@
 #include "vera_video.h"
 
 /* The VERA is advanced every VERA_HOST_PERIOD cycles, a "host line" of the
-   core; it catches up on the 31468.75 lines per second of the VGA timing
-   by the ratio of the rates (about 2 VERA lines per period). */
+   core; it catches up on the VERA line rate (31250 lines per second in VGA,
+   15743 in composite) by the ratio of the rates (about 2 VERA lines per
+   period in VGA). */
 #define VERA_HOST_PERIOD 64
 
 /* the FPGA loads its bitstream in about 100 ms after power-on: the bus is
@@ -174,11 +176,17 @@ static void vera_alarm_handler(CLOCK offset, void *data)
     alarm_set(vera_alarm, vera_alarm_clk);
 }
 
-static void vera_start(void)
+/* the host line rate follows the C64 clock: PAL 985248 Hz, NTSC 1022727 Hz */
+static void vera_set_host_rate(void)
 {
     long cycles = machine_get_cycles_per_second();
 
     vera_core_set_host_line_rate((unsigned int)((cycles * 100) / VERA_HOST_PERIOD));
+}
+
+static void vera_start(void)
+{
+    vera_set_host_rate();
     vera_alarm_clk = maincpu_clk + VERA_HOST_PERIOD;
     alarm_set(vera_alarm, vera_alarm_clk);
 }
@@ -466,9 +474,13 @@ void vera_detach(void)
 }
 
 /* The VERA has no reset input (only an internal power-on reset): the reset
-   of the C64 leaves it as it is. */
+   of the C64 leaves it as it is. A change of PAL / NTSC resets the machine
+   with its new clock: the host line rate is taken again. */
 void vera_reset(void)
 {
+    if (vera_enabled && vera_initialized) {
+        vera_set_host_rate();
+    }
 }
 
 /* ---------------------------------------------------------------------*/

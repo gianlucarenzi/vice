@@ -1070,8 +1070,16 @@ static void vera_audio_update_aflow(void)
     vera_update_irq();
 }
 
+/* One 25 MHz clock for everything (top.v: clk = clk25). VGA (DC_VIDEO
+ * output mode 0, 1, video_vga.v): 800 clocks x 525 lines, 59.52 Hz. NTSC
+ * composite / S-Video (mode 2, 3, video_composite.v): 1588 clocks per line,
+ * a field of 262.5 lines (59.97 Hz), 263 in 240p (DC_VIDEO bit 3, 59.86
+ * Hz); composer.v counts its lines by 2 from the field parity, so the
+ * line of the field is the scanline / 2. */
 #define VERA_SCANLINES_PER_FRAME 525u
-#define VERA_LINE_RATE_X100 3146875u    /* 25.175 MHz / 800 px, x100 */
+#define VERA_LINE_RATE_X100 3125000u            /* VGA: 25 MHz / 800, x100 */
+#define VERA_NTSC_LINE_RATE_X100 1574307u       /* 25 MHz / 1588, x100 */
+#define VERA_COMPOSITE() ((vera_dc[0][0] & 0x02u) != 0)
 
 /* host line rate (x100): the calls of vera_core_host_line() per second */
 static unsigned int atari_line_rate_x100(void)
@@ -1298,9 +1306,9 @@ static UBYTE vera_compute_sprite_line_collisions(UWORD py)
     return collisions;
 }
 
-static void vera_update_isr_and_coll(UWORD y)
+static void vera_update_isr_and_coll(int vsync)
 {
-    if (y == 480u)
+    if (vsync)
     {
         if (vera_sprite_frame_collisions != 0u)
             vera_isr |= 0x04u;
@@ -1312,26 +1320,49 @@ static void vera_update_isr_and_coll(UWORD y)
 
 static void vera_advance_scanline_once(void)
 {
+    int vsync;
+
     if (vera_scanline_raw < 480u)
         vera_sprite_frame_collisions |= vera_compute_sprite_line_collisions(vera_scanline_raw);
 
-    if (vera_scanline_raw + 1u >= VERA_SCANLINES_PER_FRAME)
+    if (VERA_COMPOSITE())
     {
-        vera_scanline_raw = 0;
-        vera_current_field ^= 1u;
+        /* the fields alternate 263 and 262 lines (262.5), 263 in 240p; the
+         * VSYNC IRQ and the picture come at the end of every field */
+        unsigned int lines = (vera_dc[0][0] & 0x08u) ? 263u : 262u + vera_current_field;
+
+        vsync = (vera_scanline_raw >> 1) + 1u >= lines;
+        if (vsync)
+        {
+            vera_current_field ^= 1u;
+            vera_scanline_raw = vera_current_field;
+        }
+        else
+        {
+            vera_scanline_raw += 2u;
+        }
     }
     else
     {
-        vera_scanline_raw++;
+        if (vera_scanline_raw + 1u >= VERA_SCANLINES_PER_FRAME)
+        {
+            vera_scanline_raw = 0;
+            vera_current_field ^= 1u;
+        }
+        else
+        {
+            vera_scanline_raw++;
+        }
+        vsync = vera_scanline_raw == 480u;
     }
 
-    vera_update_isr_and_coll(vera_scanline_raw);
+    vera_update_isr_and_coll(vsync);
     vera_maybe_trigger_line_irq();
     vera_update_irq();
     vera_spi_step(16);
     vera_midline_x_fp = 0;
     VERA_VIDEO_Scanline(vera_scanline_raw);
-    if (vera_scanline_raw == 480u)
+    if (vsync)
         VERA_VIDEO_Frame();
 }
 
@@ -2266,9 +2297,9 @@ void vera_core_host_line(void)
         return;
     }
 
-    /* VERA runs free at 31468.75 lines/s (25.175 MHz / 800 = 59.94 Hz),
-     * asynchronous to the host: advance it by the ratio of line rates. */
-    vera_scanline_accum += VERA_LINE_RATE_X100;
+    /* VERA runs free at its own line rate (VGA or composite), asynchronous
+     * to the host: advance it by the ratio of line rates. */
+    vera_scanline_accum += VERA_COMPOSITE() ? VERA_NTSC_LINE_RATE_X100 : VERA_LINE_RATE_X100;
     while (vera_scanline_accum >= vera_host_line_rate_x100)
     {
         vera_advance_scanline_once();
