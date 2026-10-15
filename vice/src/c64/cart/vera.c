@@ -59,6 +59,7 @@
 #include "monitor.h"
 #include "resources.h"
 #include "snapshot.h"
+#include "sound.h"
 #include "util.h"
 #include "vera.h"
 #include "vera_core.h"
@@ -88,6 +89,8 @@ static alarm_t *vera_alarm = NULL;
 static CLOCK vera_alarm_clk = 0;
 static unsigned int vera_int_num = 0;
 static int vera_irq_level = 0;
+
+static unsigned int vera_sound_speed = 0; /* sample rate of the host mixer */
 
 static vera_frame_callback_t vera_ui_frame = NULL;
 static vera_enabled_callback_t vera_ui_enabled = NULL;
@@ -201,6 +204,72 @@ void vera_init(void)
 }
 
 /* ---------------------------------------------------------------------*/
+/* sound: the PSG (16 voices) and the PCM FIFO of the VERA, in stereo,
+   added to the output of the other chips. The core renders the samples
+   when the mixer asks for them, so the PCM FIFO drains with the sound
+   output (as on the atari800 card). */
+
+static int vera_sound_machine_init(sound_t *psid, int speed, int cycles_per_sec)
+{
+    vera_sound_speed = (unsigned int)speed;
+    vera_core_sound_init(vera_sound_speed, 1);
+    return 1;
+}
+
+static void vera_sound_machine_close(sound_t *psid)
+{
+}
+
+static int vera_sound_machine_calculate_samples(sound_t **psid, int16_t *pbuf, int nr, int soc, int scc, CLOCK *delta_t)
+{
+    vera_core_sound_init(vera_sound_speed, (unsigned int)soc);
+    vera_core_sound_mix(pbuf, nr, (unsigned int)soc);
+    return nr;
+}
+
+static void vera_sound_machine_store(sound_t *psid, uint16_t addr, uint8_t val)
+{
+}
+
+static uint8_t vera_sound_machine_read(sound_t *psid, uint16_t addr)
+{
+    return 0;
+}
+
+static void vera_sound_reset(sound_t *psid, CLOCK cpu_clk)
+{
+}
+
+static int vera_sound_machine_cycle_based(void)
+{
+    return 0;
+}
+
+static int vera_sound_machine_channels(void)
+{
+    return 2;   /* the PSG voices and the PCM have a left and a right route */
+}
+
+static sound_chip_t vera_sound_chip = {
+    NULL,                                 /* NO sound chip open function */
+    vera_sound_machine_init,              /* sound chip init function */
+    vera_sound_machine_close,             /* sound chip close function */
+    vera_sound_machine_calculate_samples, /* sound chip calculate samples function */
+    vera_sound_machine_store,             /* sound chip store function */
+    vera_sound_machine_read,              /* sound chip read function */
+    vera_sound_reset,                     /* sound chip reset function */
+    vera_sound_machine_cycle_based,       /* sound chip 'is_cycle_based()' function, sound chip is NOT cycle based */
+    vera_sound_machine_channels,          /* sound chip 'get_amount_of_channels()' function, sound chip has 2 channels */
+    0                                     /* chip enabled, toggled when the card is inserted or removed */
+};
+
+/* called once by cartridge_sound_chip_init */
+void vera_sound_chip_init(void)
+{
+    sound_chip_register(&vera_sound_chip);
+}
+
+/* ---------------------------------------------------------------------*/
 /* resources                                                            */
 
 int vera_cart_enabled(void)
@@ -225,6 +294,8 @@ static int set_vera_enabled(int value, void *param)
             vera_core_sdcard_attach(vera_sdcard_name);
         }
         vera_enabled = 1;
+        vera_sound_chip.chip_enabled = 1;
+        sound_state_changed = TRUE;     /* open the output again, in stereo */
         if (vera_initialized) {
             vera_start();
         }
@@ -240,6 +311,8 @@ static int set_vera_enabled(int value, void *param)
         vera_stop();
         vera_core_shutdown();
         vera_enabled = 0;
+        vera_sound_chip.chip_enabled = 0;
+        sound_state_changed = TRUE;
         if (vera_ui_enabled != NULL) {
             vera_ui_enabled(0);
         }
@@ -429,26 +502,43 @@ static int vera_dump(void)
 
 /* ---------------------------------------------------------------------*/
 
-/* CARTVERA snapshot module format (the VRAM and the registers are not saved yet):
+/* CARTVERA snapshot module format:
 
    type  | name     | description
    ------------------------------
    DWORD | base     | base address of the card
+   DWORD | alarm    | cycles to the next VERA host line (since 0.1)
+   DWORD | size     | size of the chip state (since 0.1)
+   ARRAY | state    | the chip state, VRAM included (vera_core_state_save, since 0.1)
+
+   The SD card image is not in the snapshot: VERASDCardImage stays as it is.
  */
 
 static const char snap_module_name[] = "CARTVERA";
 #define SNAP_MAJOR   0
-#define SNAP_MINOR   0
+#define SNAP_MINOR   1
 
 int vera_snapshot_write_module(snapshot_t *s)
 {
     snapshot_module_t *m;
+    size_t size = vera_core_state_size();
+    uint8_t *state;
+    int rc = -1;
 
     m = snapshot_module_create(s, snap_module_name, SNAP_MAJOR, SNAP_MINOR);
     if (m == NULL) {
         return -1;
     }
-    if (SMW_DW(m, (uint32_t)vera_base_address) < 0) {
+    state = lib_malloc(size);
+    vera_core_state_save(state);
+    if (SMW_DW(m, (uint32_t)vera_base_address) >= 0
+        && SMW_DW(m, (uint32_t)(vera_alarm_clk - maincpu_clk)) >= 0
+        && SMW_DW(m, (uint32_t)size) >= 0
+        && SMW_BA(m, state, (unsigned int)size) >= 0) {
+        rc = 0;
+    }
+    lib_free(state);
+    if (rc < 0) {
         snapshot_module_close(m);
         return -1;
     }
@@ -460,6 +550,9 @@ int vera_snapshot_read_module(snapshot_t *s)
     uint8_t vmajor, vminor;
     snapshot_module_t *m;
     int base;
+    uint32_t alarm_delta = VERA_HOST_PERIOD;
+    uint32_t size = 0;
+    uint8_t *state = NULL;
 
     m = snapshot_module_open(s, snap_module_name, &vmajor, &vminor);
     if (m == NULL) {
@@ -472,14 +565,43 @@ int vera_snapshot_read_module(snapshot_t *s)
     if (SMR_DW_INT(m, &base) < 0) {
         goto fail;
     }
+    if (!snapshot_version_is_smaller(vmajor, vminor, 0, 1)) {
+        if (SMR_DW(m, &alarm_delta) < 0 || SMR_DW(m, &size) < 0) {
+            goto fail;
+        }
+        if (size != vera_core_state_size()) {
+            snapshot_set_error(SNAPSHOT_MODULE_INCOMPATIBLE);
+            goto fail;
+        }
+        state = lib_malloc(size);
+        if (SMR_BA(m, state, size) < 0) {
+            goto fail;
+        }
+    }
     snapshot_module_close(m);
 
-    if (set_vera_base(base, NULL) < 0) {
+    if (set_vera_base(base, NULL) < 0 || vera_enable() < 0) {
+        lib_free(state);
         return -1;
     }
-    return vera_enable();
+    if (state != NULL) {
+        int rc = vera_core_state_load(state, size);
+
+        lib_free(state);
+        if (rc < 0) {
+            snapshot_set_error(SNAPSHOT_MODULE_INCOMPATIBLE);
+            return -1;
+        }
+        if (alarm_delta == 0 || alarm_delta > VERA_HOST_PERIOD) {
+            alarm_delta = VERA_HOST_PERIOD;
+        }
+        vera_alarm_clk = maincpu_clk + alarm_delta;
+        alarm_set(vera_alarm, vera_alarm_clk);
+    }
+    return 0;
 
 fail:
+    lib_free(state);
     snapshot_module_close(m);
     return -1;
 }

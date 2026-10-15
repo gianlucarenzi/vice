@@ -52,6 +52,7 @@
 #include "crtpreviewwidget.h"
 
 #include "c64ui.h"
+#include "uivera.h"
 
 
 /** \brief  List of C64 models
@@ -137,6 +138,9 @@ int c64ui_init(void)
 
     /* set C64 model_get function */
     settings_model_widget_set_model_func(c64model_get);
+
+    /* the window of the VERA video card */
+    uivera_init();
 
     return 0;
 }

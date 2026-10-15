@@ -84,6 +84,7 @@
 #include "settings_dqbb.h"
 #include "settings_drive.h"
 #include "settings_ds12c887.h"
+#include "settings_vera.h"
 #include "settings_easyflash.h"
 #include "settings_environment.h"
 #ifdef HAVE_RAWNET
@@ -414,6 +415,9 @@ static ui_settings_tree_node_t c64_cartridges[] = {
     { CARTRIDGE_NAME_DS12C887RTC,
       "ds12c887-rtc",
       settings_ds12c887_widget_create, NULL },
+    { CARTRIDGE_NAME_VERA,
+      "vera",
+      settings_vera_widget_create, NULL },
      UI_SETTINGS_TERMINATOR
 };
 /* }}} */
@@ -542,6 +546,9 @@ static ui_settings_tree_node_t scpu64_cartridges[] = {
     { CARTRIDGE_NAME_DS12C887RTC,
       "ds12c887-rtc",
       settings_ds12c887_widget_create, NULL },
+    { CARTRIDGE_NAME_VERA,
+      "vera",
+      settings_vera_widget_create, NULL },
 
     UI_SETTINGS_TERMINATOR
 };
@@ -683,6 +690,9 @@ static ui_settings_tree_node_t c128_cartridges[] = {
     { CARTRIDGE_NAME_DS12C887RTC,
       "ds12c887-rtc",
        settings_ds12c887_widget_create, NULL },
+    { CARTRIDGE_NAME_VERA,
+      "vera",
+      settings_vera_widget_create, NULL },
 
     UI_SETTINGS_TERMINATOR
 };

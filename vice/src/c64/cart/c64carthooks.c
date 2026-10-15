@@ -3141,6 +3141,7 @@ void cartridge_sound_chip_init(void)
     sfx_soundexpander_sound_chip_init();
     magicvoice_sound_chip_init();
     shortbus_digimax_sound_chip_init();
+    vera_sound_chip_init();
 }
 
 /* ------------------------------------------------------------------------- */

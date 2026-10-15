@@ -33,6 +33,8 @@
 #ifndef VICE_VERA_CORE_H
 #define VICE_VERA_CORE_H
 
+#include <stddef.h>
+
 #include "vera_compat.h"
 
 #define VERA_CORE_REG_COUNT 32
@@ -75,6 +77,13 @@ unsigned int vera_core_get_video_version(void);
 /* audio: PSG and PCM mixed into a host buffer of 16 bit samples */
 void vera_core_sound_init(unsigned int playback_freq, unsigned int channels);
 void vera_core_sound_mix(int16_t *buffer, int frames, unsigned int channels);
+
+/* the whole state of the chip for a snapshot of the host (the SD card
+   image is not in it); load returns -1 if buf is not a state of this
+   version, and the chip is then in an undefined state */
+size_t vera_core_state_size(void);
+void vera_core_state_save(UBYTE *buf);
+int vera_core_state_load(const UBYTE *buf, size_t len);
 
 void vera_core_shutdown(void);
 

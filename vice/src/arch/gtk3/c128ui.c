@@ -42,6 +42,7 @@
 #include "videomodelwidget.h"
 
 #include "c128ui.h"
+#include "uivera.h"
 
 
 /** \brief  List of C128 models
@@ -158,6 +159,9 @@ int c128ui_init(void)
             gtk_widget_hide(window);
         }
     }
+
+    /* the window of the VERA video card */
+    uivera_init();
 
     return 0;
 }

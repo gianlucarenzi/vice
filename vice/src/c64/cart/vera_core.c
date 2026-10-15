@@ -1047,15 +1047,17 @@ static void vera_spi_step(int cycles)
     }
 }
 
+/* the level of IRQ_N last given to the host */
+static int vera_irq_out = 0;
+
 static void vera_update_irq(void)
 {
     /* IRQ_N is level-sensitive: asserted while (ISR & IEN) != 0 */
-    static int level = 0;
     int now = (vera_isr & vera_ien & 0x0Fu) != 0;
 
-    if (now != level) {
-        level = now;
-        vera_host_set_irq(level);
+    if (now != vera_irq_out) {
+        vera_irq_out = now;
+        vera_host_set_irq(vera_irq_out);
     }
 }
 
@@ -1668,6 +1670,10 @@ static void vera_power_on(const char *caller, unsigned int config_ms)
 
     vera_chip_reset(caller);
     vera_start_config_delay(config_ms);
+
+    /* a new chip: IRQ_N released, whatever the host did with the line */
+    vera_irq_out = 0;
+    vera_host_set_irq(0);
 }
 
 static UBYTE vera_ien_read(void)
@@ -2559,4 +2565,215 @@ vim:ts=4:sw=4:
 void vera_core_sound_mix(int16_t *buffer, int frames, unsigned int channels)
 {
     vera_sound_mix(buffer, frames * (int)channels, channels, 2);
+}
+
+/* ------------------------------------------------------------------ */
+/* State for the snapshots of the host                                  */
+/* ------------------------------------------------------------------ */
+
+/* The state is a flat little endian byte stream: the same function walks
+ * it to save (buf written), to load (buf read) or to size it (buf NULL).
+ * The SD card image itself is the host's; a command in flight on the SPI
+ * bus is dropped on load. */
+
+#define VERA_STATE_MAGIC   0x56455241u     /* "VERA" */
+#define VERA_STATE_VERSION 1u
+
+typedef struct {
+    UBYTE *buf;         /* NULL: only count */
+    size_t pos;
+    size_t len;         /* bytes of buf (load) */
+    int load;
+    int error;
+} VERA_StateIO;
+
+static void vera_state_bytes(VERA_StateIO *io, void *data, size_t n)
+{
+    if (io->buf != NULL) {
+        if (io->load) {
+            if (io->pos + n > io->len) {
+                io->error = TRUE;
+                return;
+            }
+            memcpy(data, io->buf + io->pos, n);
+        } else {
+            memcpy(io->buf + io->pos, data, n);
+        }
+    }
+    io->pos += n;
+}
+
+static void vera_state_u32(VERA_StateIO *io, uint32_t *v)
+{
+    UBYTE b[4];
+
+    b[0] = (UBYTE)*v; b[1] = (UBYTE)(*v >> 8); b[2] = (UBYTE)(*v >> 16); b[3] = (UBYTE)(*v >> 24);
+    vera_state_bytes(io, b, 4);
+    if (io->load && !io->error)
+        *v = (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
+}
+
+#define VERA_STATE_INT(io, var) do { \
+        uint32_t v_ = (uint32_t)(var); \
+        vera_state_u32((io), &v_); \
+        if ((io)->load) (var) = (int)(int32_t)v_; \
+    } while (0)
+#define VERA_STATE_UINT(io, var, type) do { \
+        uint32_t v_ = (uint32_t)(var); \
+        vera_state_u32((io), &v_); \
+        if ((io)->load) (var) = (type)v_; \
+    } while (0)
+#define VERA_STATE_SINT(io, var, type) do { \
+        uint32_t v_ = (uint32_t)(int32_t)(var); \
+        vera_state_u32((io), &v_); \
+        if ((io)->load) (var) = (type)(int32_t)v_; \
+    } while (0)
+/* the phases in millionths: enough for the audio, independent of the host */
+#define VERA_STATE_PHASE(io, var) do { \
+        uint32_t v_ = (uint32_t)((var) * 1000000.0); \
+        vera_state_u32((io), &v_); \
+        if ((io)->load) (var) = (double)v_ / 1000000.0; \
+    } while (0)
+
+static void vera_state_walk(VERA_StateIO *io)
+{
+    uint32_t magic = VERA_STATE_MAGIC;
+    uint32_t version = VERA_STATE_VERSION;
+    int i;
+
+    vera_state_u32(io, &magic);
+    vera_state_u32(io, &version);
+    if (io->load && (magic != VERA_STATE_MAGIC || version != VERA_STATE_VERSION)) {
+        io->error = TRUE;
+        return;
+    }
+
+    vera_state_bytes(io, vera_vram, sizeof(vera_vram));
+    vera_state_bytes(io, vera_addr_l, sizeof(vera_addr_l));
+    vera_state_bytes(io, vera_addr_m, sizeof(vera_addr_m));
+    vera_state_bytes(io, vera_addr_h, sizeof(vera_addr_h));
+    vera_state_bytes(io, vera_rddata, sizeof(vera_rddata));
+    vera_state_bytes(io, &vera_ctrl, 1);
+    vera_state_bytes(io, &vera_ien, 1);
+    vera_state_bytes(io, &vera_isr, 1);
+    VERA_STATE_UINT(io, vera_irqline, UWORD);
+    VERA_STATE_UINT(io, vera_scanline_raw, UWORD);
+    vera_state_bytes(io, &vera_current_field, 1);
+    VERA_STATE_UINT(io, vera_scanline_accum, unsigned int);
+    VERA_STATE_INT(io, vera_midline_x_fp);
+    vera_state_bytes(io, &vera_sprite_frame_collisions, 1);
+    vera_state_bytes(io, vera_dc, sizeof(vera_dc));
+    vera_state_bytes(io, vera_l0, sizeof(vera_l0));
+    vera_state_bytes(io, vera_l1, sizeof(vera_l1));
+    VERA_STATE_UINT(io, vera_dead_lines, unsigned int);
+
+    /* FX */
+    VERA_STATE_SINT(io, fx_pixel_pos_x, int32_t);
+    VERA_STATE_SINT(io, fx_pixel_pos_y, int32_t);
+    VERA_STATE_SINT(io, fx_pixel_incr_x, int16_t);
+    VERA_STATE_SINT(io, fx_pixel_incr_y, int16_t);
+    VERA_STATE_INT(io, fx_pixel_incr_x_times_32);
+    VERA_STATE_INT(io, fx_pixel_incr_y_times_32);
+    vera_state_bytes(io, &fx_addr1_mode, 1);
+    VERA_STATE_INT(io, fx_4bit_mode);
+    VERA_STATE_INT(io, fx_16bit_hop);
+    VERA_STATE_INT(io, fx_transparency_enabled);
+    VERA_STATE_INT(io, fx_cache_write_enabled);
+    VERA_STATE_INT(io, fx_cache_fill_enabled);
+    VERA_STATE_INT(io, fx_one_byte_cache_cycling);
+    vera_state_bytes(io, &fx_tiledata_base_address, 1);
+    vera_state_bytes(io, &fx_map_base_address, 1);
+    vera_state_bytes(io, &fx_map_size, 1);
+    VERA_STATE_INT(io, fx_apply_clip);
+    VERA_STATE_INT(io, fx_2bit_polygon_pixels);
+    vera_state_u32(io, &ib_cache32);
+    vera_state_bytes(io, &fx_cache_byte_index, 1);
+    vera_state_bytes(io, &fx_cache_nibble_index, 1);
+    VERA_STATE_INT(io, fx_cache_increment_mode);
+    VERA_STATE_INT(io, fx_mult_enabled);
+    VERA_STATE_INT(io, fx_add_or_sub);
+    VERA_STATE_INT(io, fx_accumulate);
+    VERA_STATE_SINT(io, fx_mult_accumulator, int32_t);
+    VERA_STATE_INT(io, fx_2bit_poke_mode);
+    vera_state_bytes(io, &fx_16bit_hop_start_index, 1);
+
+    /* audio */
+    vera_state_bytes(io, &vera_audio_ctrl, 1);
+    vera_state_bytes(io, &vera_audio_rate, 1);
+    vera_state_bytes(io, &vera_audio_rate_raw, 1);
+    vera_state_bytes(io, vera_pcm_fifo, sizeof(vera_pcm_fifo));
+    VERA_STATE_UINT(io, vera_pcm_fifo_read, unsigned int);
+    VERA_STATE_UINT(io, vera_pcm_fifo_write, unsigned int);
+    VERA_STATE_UINT(io, vera_pcm_fifo_count, unsigned int);
+    VERA_STATE_PHASE(io, vera_pcm_phase);
+    VERA_STATE_INT(io, vera_pcm_current_left);
+    VERA_STATE_INT(io, vera_pcm_current_right);
+    VERA_STATE_INT(io, vera_pcm_current_valid);
+    for (i = 0; i < VERA_PSG_VOICE_COUNT; i++) {
+        VERA_STATE_UINT(io, vera_psg_state[i].noiseval, UWORD);
+        vera_state_u32(io, &vera_psg_state[i].phase);
+    }
+    VERA_STATE_UINT(io, vera_psg_noise_state, UWORD);
+    VERA_STATE_PHASE(io, vera_psg_phase);
+
+    /* SPI and the SD card protocol */
+    vera_state_bytes(io, &vera_spi_data, 1);
+    vera_state_bytes(io, &vera_spi_ctrl, 1);
+    vera_state_bytes(io, &vera_spi_tx, 1);
+    VERA_STATE_INT(io, vera_spi_ss);
+    VERA_STATE_INT(io, vera_spi_autotx);
+    VERA_STATE_UINT(io, vera_sd_lba, ULONG);
+    vera_state_bytes(io, &vera_sd_last_cmd, 1);
+    VERA_STATE_INT(io, vera_sd_is_acmd);
+    VERA_STATE_INT(io, vera_sd_is_idle);
+    VERA_STATE_INT(io, vera_sd_is_initialized);
+    VERA_STATE_INT(io, vera_sd_selected);
+}
+
+size_t vera_core_state_size(void)
+{
+    VERA_StateIO io;
+
+    memset(&io, 0, sizeof(io));
+    vera_state_walk(&io);
+    return io.pos;
+}
+
+void vera_core_state_save(UBYTE *buf)
+{
+    VERA_StateIO io;
+
+    memset(&io, 0, sizeof(io));
+    io.buf = buf;
+    vera_state_walk(&io);
+}
+
+int vera_core_state_load(const UBYTE *buf, size_t len)
+{
+    VERA_StateIO io;
+
+    if (len != vera_core_state_size())
+        return -1;
+    memset(&io, 0, sizeof(io));
+    io.buf = (UBYTE *)buf;
+    io.len = len;
+    io.load = TRUE;
+    vera_state_walk(&io);
+    if (io.error)
+        return -1;
+
+    /* nothing in flight on the SPI bus */
+    vera_spi_busy = FALSE;
+    vera_spi_cycles_until_done = 0;
+    vera_sd_rxbuf_idx = 0;
+    vera_sd_ongoing_multiblock_read = FALSE;
+    vera_sd_clear_response();
+    vera_psg_last_left = 0;
+    vera_psg_last_right = 0;
+
+    /* the picture is all new, the IRQ line follows ISR & IEN */
+    vera_video_version++;
+    vera_irq_out = (vera_isr & vera_ien & 0x0Fu) != 0;
+    vera_host_set_irq(vera_irq_out);
+    return 0;
 }

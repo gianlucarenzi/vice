@@ -34,6 +34,7 @@
 struct snapshot_s;
 
 void vera_init(void);
+void vera_sound_chip_init(void);
 int vera_resources_init(void);
 void vera_resources_shutdown(void);
 int vera_cmdline_options_init(void);

@@ -120,6 +120,7 @@ libwidgets_a_SOURCES = \
 	settings_dqbb.c \
 	settings_drive.c \
 	settings_ds12c887.c \
+	settings_vera.c \
 	settings_easyflash.c \
 	settings_environment.c \
 	settings_ethernet.c \
@@ -293,6 +294,7 @@ EXTRA_DIST = \
 	settings_dqbb.h \
 	settings_drive.h \
 	settings_ds12c887.h \
+	settings_vera.h \
 	settings_easyflash.h \
 	settings_environment.h \
 	settings_ethernet.h \
