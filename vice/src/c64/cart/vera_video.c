@@ -58,6 +58,10 @@ static ULONG         vera_line_hi[2][VERA_H];
 #define VERA_BUCKETS      (0x20000u >> VERA_BUCKET_SHIFT)
 #define VERA_LINE_WORDS   ((VERA_H + 31) / 32)
 static uint32_t      vera_bucket_lines[VERA_BUCKETS][VERA_LINE_WORDS];
+/* palette writes only recolour: a line rendered with an older palette
+ * version is recoloured from its stored indices, not rendered again */
+static unsigned int  vera_palette_version = 1;
+static unsigned int  vera_line_palver[VERA_H];
 /* vera_fb changed since the last VERA_VIDEO_Frame(): an unchanged picture
  * is not handed to the UI again */
 static int           vera_fb_dirty = 1;
@@ -507,8 +511,13 @@ int VERA_VIDEO_VramWrite(ULONG lo, ULONG hi)
     vera_core_get_regsnap(&rs);
     video = rs.dc[0][0];
 
-    /* palette: every pixel; sprites: attributes and data can be anywhere */
-    if (vera_ranges_overlap(lo, hi, 0x1FA00u, 0x1FBFFu) || (video & 0x40))
+    /* palette: every pixel, but the layer and sprite indices stay valid */
+    if (vera_ranges_overlap(lo, hi, 0x1FA00u, 0x1FBFFu)) {
+        vera_palette_version++;
+        return 0;
+    }
+    /* sprites: attributes and data can be anywhere */
+    if (video & 0x40)
         return 1;
 
     /* tile data of an enabled tile layer: any line can show that tile */
@@ -559,6 +568,7 @@ void VERA_VIDEO_Reset(void)
     memset(vera_sprite_z_fb, 0, sizeof(vera_sprite_z_fb));
     memset(vera_fb, 0, sizeof(vera_fb));
     memset(vera_line_version, 0, sizeof(vera_line_version));
+    memset(vera_line_palver, 0, sizeof(vera_line_palver));
     vera_fb_dirty = 1;
     memset(vera_line_lo, 0xFF, sizeof(vera_line_lo));
     memset(vera_line_hi, 0, sizeof(vera_line_hi));
@@ -572,9 +582,15 @@ void VERA_VIDEO_Scanline(UWORD scanline)
     if (scanline < VERA_H) {
         /* Nothing that affects the picture was written since this line was
          * last rendered: the buffers are still valid. */
-        if (vera_line_version[scanline] == version)
+        if (vera_line_version[scanline] == version) {
+            if (vera_line_palver[scanline] != vera_palette_version) {
+                vera_line_palver[scanline] = vera_palette_version;
+                VERA_VIDEO_Recolor(scanline, 0);
+            }
             return;
+        }
         vera_line_version[scanline] = version;
+        vera_line_palver[scanline] = vera_palette_version;
     }
     render_scanline_range((int)scanline, 0, VERA_W);
 }
