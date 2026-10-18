@@ -32,6 +32,7 @@
 #include "vice.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "vera_compat.h"
@@ -65,6 +66,20 @@ static unsigned int  vera_line_palver[VERA_H];
 /* vera_fb changed since the last VERA_VIDEO_Frame(): an unchanged picture
  * is not handed to the UI again */
 static int           vera_fb_dirty = 1;
+
+/* VRAM writes seen (VERA_VIDEO_VramWrite): a line copied from the one above
+ * needs nothing written since that one was rendered */
+static unsigned int  vera_vram_wcount = 0;
+
+/* -DVERA_VIDEO_CHECK: every line is rendered again with the reference code
+ * (no fast tile path, no line copy, palette decoded per pixel) and the two
+ * are compared; without it vera_ref is the constant 0 */
+#ifdef VERA_VIDEO_CHECK
+static int           vera_ref = 0;
+static unsigned long vera_check_lines = 0, vera_check_bad = 0;
+#else
+#define vera_ref 0
+#endif
 /* integer window size multiplier, for high-DPI screens (the UI reads it) */
 static int           vera_scale = 1;
 
@@ -114,6 +129,30 @@ static inline uint32_t get_output_color(const UBYTE *vram, UBYTE dc_video, int i
     }
 
     return color;
+}
+
+/* colour of each index for the current palette and output mode: rebuilt
+ * when the palette, a register or the mode changed (256 entries instead of
+ * one palette decode per output pixel) */
+static uint32_t     vera_pal_cache[256];
+static unsigned int vera_pal_cache_pver = 0;
+static unsigned int vera_pal_cache_vver = 0;
+static UBYTE        vera_pal_cache_mode = 0xFF;
+
+static const uint32_t *vera_palette(const UBYTE *vram, UBYTE dc_video)
+{
+    unsigned int vver = vera_core_get_video_version();
+    UBYTE mode = dc_video & 0x07u;
+
+    if (vera_pal_cache_pver != vera_palette_version || vera_pal_cache_vver != vver
+        || vera_pal_cache_mode != mode) {
+        vera_pal_cache_pver = vera_palette_version;
+        vera_pal_cache_vver = vver;
+        vera_pal_cache_mode = mode;
+        for (int i = 0; i < 256; i++)
+            vera_pal_cache[i] = get_output_color(vram, dc_video, i);
+    }
+    return vera_pal_cache;
 }
 
 static inline UBYTE compose_pixel_index(UBYTE sprite_z, UBYTE sprite_col,
@@ -171,6 +210,66 @@ static void render_tile_layer(UBYTE *row, const UBYTE *vram, int layer,
         if (row_lo + (ULONG)map_w * 2u - 1u > vera_line_hi[layer][py])
             vera_line_hi[layer][py] = row_lo + (ULONG)map_w * 2u - 1u;
 
+        if (!vera_ref && color_depth != 0) {
+            /* 2/4/8 bpp: shifts instead of divisions, x in fixed point, the
+             * map entry and the tile row fetched once per tile */
+            int bpp_log2 = color_depth;             /* 1, 2, 3: 2, 4, 8 bpp */
+            int bpp = 1 << bpp_log2;
+            int tw_log2 = (tile_w == 16) ? 4 : 3;
+            int row_bytes = (tile_w * bpp) >> 3;
+            ULONG tile_bytes = (ULONG)tile_h * (ULONG)row_bytes;
+            int ppb_mask = (8 >> bpp_log2) - 1;     /* pixels per byte - 1 */
+            int byte_sh = 3 - bpp_log2;             /* pixel -> byte in the row */
+            int pix_mask = (1 << bpp) - 1;
+            UBYTE t256 = t256c ? 0x80u : 0u;
+            ULONG map_row = map_base + (ULONG)tile_row * (ULONG)map_w * 2u;
+            int lx_fp = (start - ax0) * hscale + (hscroll << 7);
+            int cur_col = -1;
+            int hflip = 0;
+            UBYTE palhi = 0;
+            ULONG gaddr = 0;
+            int prev_lx = -1;
+            int color_idx = 0;
+
+            for (int px = start; px < end; px++, lx_fp += hscale) {
+                int lx = (lx_fp >> 7) & 0xFFF;
+                int tile_col, tfx;
+
+                /* DC_HSCALE < 128: the same source pixel on several output
+                 * pixels, fetched once */
+                if (lx == prev_lx) {
+                    if (color_idx != 0)
+                        row[px] = (UBYTE)color_idx;
+                    continue;
+                }
+                prev_lx = lx;
+                tile_col = (lx >> tw_log2) & (map_w - 1);
+                tfx = lx & (tile_w - 1);
+
+                if (tile_col != cur_col) {
+                    ULONG map_addr = map_row + (ULONG)tile_col * 2u;
+                    UBYTE ch_l = vram[map_addr & 0x1FFFFu];
+                    UBYTE attr = vram[(map_addr + 1) & 0x1FFFFu];
+                    int vflip = (attr >> 3) & 1;
+                    int tfy = vflip ? (tile_h - 1 - tile_fy) : tile_fy;
+                    int tile_idx = ch_l | ((int)(attr & 0x03) << 8);
+
+                    cur_col = tile_col;
+                    hflip = (attr >> 2) & 1;
+                    palhi = (UBYTE)((attr & 0xF0u) | t256);
+                    gaddr = tile_base + (ULONG)tile_idx * tile_bytes + (ULONG)tfy * (ULONG)row_bytes;
+                }
+                if (hflip)
+                    tfx = tile_w - 1 - tfx;
+                color_idx = (vram[(gaddr + (ULONG)(tfx >> byte_sh)) & 0x1FFFFu]
+                             >> ((ppb_mask - (tfx & ppb_mask)) << bpp_log2)) & pix_mask;
+                if (color_idx >= 1 && color_idx <= 15)
+                    color_idx |= palhi;
+                if (color_idx != 0)
+                    row[px] = (UBYTE)color_idx;
+            }
+            return;
+        }
         for (int px = start; px < end; px++) {
             int lx_raw = ((px - ax0) * hscale) >> 7;
             int lx = (lx_raw + hscroll) & 0xFFF;
@@ -399,6 +498,12 @@ static void vera_line_buckets(int py, int set)
     vera_bucket_mark(py, vera_line_lo[1][py], vera_line_hi[1][py], set);
 }
 
+/* the last full line rendered (or copied) and what it was rendered from */
+static int           vera_dup_py = -1;
+static int           vera_dup_src;
+static unsigned int  vera_dup_vver, vera_dup_wcount, vera_dup_pver;
+static VERA_RegSnap  vera_dup_rs;
+
 static void render_scanline_range_inner(int py, int xstart, int xend)
 {
     VERA_RegSnap rs;
@@ -444,8 +549,43 @@ static void render_scanline_range_inner(int py, int xstart, int xend)
      * (mid-line change) adds to it */
     vera_fb_dirty = 1;
     if (start == 0 && end == VERA_W) {
+        unsigned int vver = vera_core_get_video_version();
+        int inside = (py >= ay0 && py < ay1);
+        int vscale = rs.dc[0][2];
+        int src = inside ? ((py - ay0) * vscale) >> 7 : -1;
+
+        /* DC_VSCALE < 128 shows a source line on several output lines: when
+         * the line above shows the same one and nothing was written since it
+         * was rendered, this line is the same, copy it */
+        if (!vera_ref && vera_dup_py >= 0 && py == vera_dup_py + 1 && src == vera_dup_src && vver == vera_dup_vver
+            && vera_vram_wcount == vera_dup_wcount && vera_palette_version == vera_dup_pver
+            && memcmp(&rs, &vera_dup_rs, sizeof rs) == 0) {
+            size_t o = (size_t)py * VERA_W;
+
+            memcpy(vera_layer_fb[0] + o, vera_layer_fb[0] + o - VERA_W, VERA_W);
+            memcpy(vera_layer_fb[1] + o, vera_layer_fb[1] + o - VERA_W, VERA_W);
+            memcpy(vera_sprite_col_fb + o, vera_sprite_col_fb + o - VERA_W, VERA_W);
+            memcpy(vera_sprite_z_fb + o, vera_sprite_z_fb + o - VERA_W, VERA_W);
+            memcpy(vera_fb + o, vera_fb + o - VERA_W, VERA_W * sizeof(uint32_t));
+            vera_line_lo[0][py] = vera_line_lo[0][py - 1];
+            vera_line_lo[1][py] = vera_line_lo[1][py - 1];
+            vera_line_hi[0][py] = vera_line_hi[0][py - 1];
+            vera_line_hi[1][py] = vera_line_hi[1][py - 1];
+            vera_dup_py = py;
+            return;
+        }
+        if (!vera_ref) {
+            vera_dup_py = py;
+            vera_dup_src = src;
+            vera_dup_vver = vver;
+            vera_dup_wcount = vera_vram_wcount;
+            vera_dup_pver = vera_palette_version;
+            vera_dup_rs = rs;
+        }
         vera_line_lo[0][py] = vera_line_lo[1][py] = 0xFFFFFFFFu;
         vera_line_hi[0][py] = vera_line_hi[1][py] = 0;
+    } else if (!vera_ref) {
+        vera_dup_py = -1;                   /* partial render: no copy from it */
     }
 
     layer0_row = vera_layer_fb[0] + (size_t)py * VERA_W;
@@ -487,11 +627,16 @@ static void render_scanline_range_inner(int py, int xstart, int xend)
     if (rs.dc[0][0] & 0x40)
         render_sprites(sprite_col_row, sprite_z_row, vram, &rs, py, ax0, ay0, start, end);
 
-    for (int px = start; px < end; px++) {
-        UBYTE color_idx = compose_pixel_index(sprite_z_row[px], sprite_col_row[px],
-                                              layer0_row[px], layer1_row[px]);
-        fb_row[px] = get_output_color(vram, rs.dc[0][0],
-                                      color_idx ? color_idx : rs.dc[0][3]);
+    {
+        const uint32_t *pal = vera_palette(vram, rs.dc[0][0]);
+        UBYTE bg = rs.dc[0][3];
+
+        for (int px = start; px < end; px++) {
+            UBYTE color_idx = compose_pixel_index(sprite_z_row[px], sprite_col_row[px],
+                                                  layer0_row[px], layer1_row[px]);
+            fb_row[px] = vera_ref ? get_output_color(vram, rs.dc[0][0], color_idx ? color_idx : bg)
+                                  : pal[color_idx ? color_idx : bg];
+        }
     }
 }
 
@@ -502,6 +647,31 @@ static void render_scanline_range(int py, int xstart, int xend)
         return;
     vera_line_buckets(py, 0);
     render_scanline_range_inner(py, xstart, xend);
+#ifdef VERA_VIDEO_CHECK
+    {
+        static UBYTE l0[VERA_W], l1[VERA_W], sc[VERA_W], sz[VERA_W];
+        static uint32_t fb[VERA_W];
+        size_t o = (size_t)py * VERA_W;
+
+        memcpy(l0, vera_layer_fb[0] + o, VERA_W);
+        memcpy(l1, vera_layer_fb[1] + o, VERA_W);
+        memcpy(sc, vera_sprite_col_fb + o, VERA_W);
+        memcpy(sz, vera_sprite_z_fb + o, VERA_W);
+        memcpy(fb, vera_fb + o, sizeof fb);
+        vera_ref = 1;
+        render_scanline_range_inner(py, xstart, xend);
+        vera_ref = 0;
+        ++vera_check_lines;
+        if (memcmp(l0, vera_layer_fb[0] + o, VERA_W) || memcmp(l1, vera_layer_fb[1] + o, VERA_W)
+            || memcmp(sc, vera_sprite_col_fb + o, VERA_W) || memcmp(sz, vera_sprite_z_fb + o, VERA_W)
+            || memcmp(fb, vera_fb + o, sizeof fb)) {
+            if (++vera_check_bad <= 20)
+                fprintf(stderr, "VERA_VIDEO_CHECK: line %d (%d-%d) differs\n", py, xstart, xend);
+        }
+        if ((vera_check_lines & 0xFFFFu) == 0)
+            fprintf(stderr, "VERA_VIDEO_CHECK: %lu lines, %lu different\n", vera_check_lines, vera_check_bad);
+    }
+#endif
     vera_line_buckets(py, 1);
 }
 
@@ -566,6 +736,7 @@ int VERA_VIDEO_VramWrite(ULONG lo, ULONG hi)
     int layer, py, w;
     ULONG b, last;
 
+    vera_vram_wcount++;
     vera_core_get_regsnap(&rs);
     video = rs.dc[0][0];
 
@@ -706,17 +877,20 @@ void VERA_VIDEO_Recolor(UWORD scanline, UWORD xstart)
 
     vera_fb_dirty = 1;
     row = (size_t)py * VERA_W;
-    for (int px = start; px < end; px++) {
-        int inside = (py >= ay0 && py < ay1 && px >= ax0 && px < ax1);
-        UBYTE color_idx = 0;
+    {
+        const uint32_t *pal = vera_palette(vram, rs.dc[0][0]);
 
-        if (inside)
-            color_idx = compose_pixel_index(vera_sprite_z_fb[row + px],
-                                            vera_sprite_col_fb[row + px],
-                                            vera_layer_fb[0][row + px],
-                                            vera_layer_fb[1][row + px]);
-        vera_fb[row + px] = get_output_color(vram, rs.dc[0][0],
-                                             color_idx ? color_idx : rs.dc[0][3]);
+        for (int px = start; px < end; px++) {
+            int inside = (py >= ay0 && py < ay1 && px >= ax0 && px < ax1);
+            UBYTE color_idx = 0;
+
+            if (inside)
+                color_idx = compose_pixel_index(vera_sprite_z_fb[row + px],
+                                                vera_sprite_col_fb[row + px],
+                                                vera_layer_fb[0][row + px],
+                                                vera_layer_fb[1][row + px]);
+            vera_fb[row + px] = pal[color_idx ? color_idx : rs.dc[0][3]];
+        }
     }
 }
 
