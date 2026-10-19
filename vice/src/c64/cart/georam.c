@@ -72,6 +72,7 @@
  *
  * RAM size | $dfff
  * ------------------
+ *   256k   | $00-$0f   (the GeoRAM of the VERA card, vera.c)
  *   512k   | $00-$1f
  *  1024k   | $00-$3f
  *  2048k   | $00-$7f
@@ -118,6 +119,10 @@ static int georam_enabled = 0;
 
 /* Size of the GEORAM.  */
 static int georam_size = 0;
+
+/* Largest size allowed (KiB): 256 while the VERA card, which carries the
+   GeoRAM, is present (georam_set_max_size, vera.c).  */
+static int georam_max_kb = 4096;
 
 /* Size of the GEORAM in KiB.  */
 static int georam_size_kb = 0;
@@ -365,8 +370,15 @@ static int set_georam_size(int val, void *param)
         return 0;
     }
 
+    if (val > georam_max_kb) {
+        log_message(georam_log, "GEORAM size %d KiB: at most %d KiB here (VERA card).", val, georam_max_kb);
+        return -1;
+    }
+
     switch (val) {
-        /* sizes smaller than 512k never existed */
+        /* sizes smaller than 512k never existed as a cartridge; 256k is the
+           GeoRAM of the VERA card */
+        case 256:
         case 512:
         case 1024:
         case 2048:
@@ -388,6 +400,15 @@ static int set_georam_size(int val, void *param)
     }
 
     return 0;
+}
+
+/* The largest size (KiB); a larger current size is brought down to it. */
+void georam_set_max_size(int kb)
+{
+    georam_max_kb = kb;
+    if (georam_size_kb > kb) {
+        resources_set_int("GEORAMsize", kb);
+    }
 }
 
 static int set_georam_io_swap(int value, void *param)

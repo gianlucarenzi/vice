@@ -52,6 +52,7 @@
 #include "cartridge.h"
 #include "cmdline.h"
 #include "export.h"
+#include "georam.h"
 #include "interrupt.h"
 #include "lib.h"
 #include "log.h"
@@ -286,27 +287,33 @@ int vera_cart_enabled(void)
     return vera_enabled;
 }
 
-/* The card carries a GeoRAM (512 KB, the smallest that existed): window
-   $de00-$deff, registers $dffe/$dfff (mirrors $df80-$dffd), with VERA at
-   $df00-$df1f.  Enabled with the card when VERA is at $df00; with VERA at
-   $de00 the two would collide, so there is none. */
+/* The card carries a GeoRAM of 256 KB: window $de00-$deff, registers
+   $dffe/$dfff (mirrors $df80-$dffd), with VERA at $df00-$df1f.  Enabled
+   with the card when VERA is at $df00, and while the card is there the
+   GeoRAM cannot be larger (georam_set_max_size); with VERA at $de00 the two
+   would collide, so there is none. */
+#define VERA_GEORAM_KB 256
 static int vera_georam_on = 0;
 
 static void vera_georam(int on)
 {
     if (on && vera_base_address == 0xdf00) {
         int en = 0;
+        georam_set_max_size(VERA_GEORAM_KB);
+        resources_set_int("GEORAMsize", VERA_GEORAM_KB);
         resources_get_int("GEORAM", &en);
         if (!en) {
-            resources_set_int("GEORAMsize", 512);
             if (resources_set_int("GEORAM", 1) == 0) {
                 vera_georam_on = 1;
-                log_message(vera_log, "GeoRAM 512 KB of the VERA card enabled");
+                log_message(vera_log, "GeoRAM %d KB of the VERA card enabled", VERA_GEORAM_KB);
             }
         }
-    } else if (!on && vera_georam_on) {
-        resources_set_int("GEORAM", 0);
-        vera_georam_on = 0;
+    } else if (!on) {
+        if (vera_georam_on) {
+            resources_set_int("GEORAM", 0);
+            vera_georam_on = 0;
+        }
+        georam_set_max_size(4096);
     }
 }
 
@@ -465,7 +472,7 @@ static const cmdline_option_t cmdline_options[] =
       NULL, "Disable the VERA video card" },
     { "-verabase", SET_RESOURCE, CMDLINE_ATTRIB_NEED_ARGS,
       NULL, NULL, "VERAbase", NULL,
-      "<Base address>", "Base address of the VERA video card. (0xDF00: IO2 $DF00-$DF1F, default, with the GeoRAM 512 KB of the card; 0xDE00: IO1, no GeoRAM)" },
+      "<Base address>", "Base address of the VERA video card. (0xDF00: IO2 $DF00-$DF1F, default, with the GeoRAM 256 KB of the card; 0xDE00: IO1, no GeoRAM)" },
     { "-verasdcard", SET_RESOURCE, CMDLINE_ATTRIB_NEED_ARGS,
       NULL, NULL, "VERASDCardImage", NULL,
       "<Name>", "Raw SD card image (for example made by dd) on the SPI port of the VERA" },
