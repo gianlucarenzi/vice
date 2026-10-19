@@ -80,7 +80,7 @@ static log_t vera_log = LOG_DEFAULT;
 
 /* resources */
 static int vera_enabled = 0;
-static int vera_base_address = 0xde00;
+static int vera_base_address = 0xdf00;
 static char *vera_sdcard_name = NULL;
 static int vera_psg_volume = 100;
 static int vera_debug_level = 0;
@@ -108,7 +108,8 @@ static io_source_t vera_device = {
     CARTRIDGE_NAME_VERA,      /* name of the device */
     IO_DETACH_RESOURCE,       /* use resource to detach the device when involved in a read-collision */
     "VERA",                   /* resource to set to '0' */
-    0xde00, 0xdeff, 0x1f,     /* range for the device, regs: $de00-$de1f, images up to $deff */
+    0xdf00, 0xdf1f, 0x1f,     /* range for the device: regs $df00-$df1f, no mirrors (the GeoRAM
+                                 of the card uses $de00-$deff and $df80-$dfff) */
     1,                        /* read is always valid */
     vera_store,               /* store function */
     NULL,                     /* NO poke function */
@@ -124,7 +125,7 @@ static io_source_t vera_device = {
 static io_source_list_t *vera_list_item = NULL;
 
 static export_resource_t export_res = {
-    CARTRIDGE_NAME_VERA, 0, 0, &vera_device, NULL, CARTRIDGE_VERA
+    CARTRIDGE_NAME_VERA, 0, 0, NULL, &vera_device, CARTRIDGE_VERA
 };
 
 /* ---------------------------------------------------------------------*/
@@ -285,6 +286,30 @@ int vera_cart_enabled(void)
     return vera_enabled;
 }
 
+/* The card carries a GeoRAM (512 KB, the smallest that existed): window
+   $de00-$deff, registers $dffe/$dfff (mirrors $df80-$dffd), with VERA at
+   $df00-$df1f.  Enabled with the card when VERA is at $df00; with VERA at
+   $de00 the two would collide, so there is none. */
+static int vera_georam_on = 0;
+
+static void vera_georam(int on)
+{
+    if (on && vera_base_address == 0xdf00) {
+        int en = 0;
+        resources_get_int("GEORAM", &en);
+        if (!en) {
+            resources_set_int("GEORAMsize", 512);
+            if (resources_set_int("GEORAM", 1) == 0) {
+                vera_georam_on = 1;
+                log_message(vera_log, "GeoRAM 512 KB of the VERA card enabled");
+            }
+        }
+    } else if (!on && vera_georam_on) {
+        resources_set_int("GEORAM", 0);
+        vera_georam_on = 0;
+    }
+}
+
 static int set_vera_enabled(int value, void *param)
 {
     int val = value ? 1 : 0;
@@ -310,7 +335,9 @@ static int set_vera_enabled(int value, void *param)
         if (vera_ui_enabled != NULL) {
             vera_ui_enabled(1);
         }
+        vera_georam(1);
     } else if (vera_enabled && !val) {
+        vera_georam(0);
         if (vera_list_item != NULL) {
             export_remove(&export_res);
             io_source_unregister(vera_list_item);
@@ -353,7 +380,7 @@ static int set_vera_base(int val, void *param)
         set_vera_enabled(0, NULL);
     }
     vera_device.start_address = (uint16_t)val;
-    vera_device.end_address = (uint16_t)(val + 0xff);
+    vera_device.end_address = (uint16_t)(val + 0x1f);
     vera_base_address = val;
     if (old) {
         set_vera_enabled(1, NULL);
@@ -404,7 +431,7 @@ static const resource_string_t resources_string[] = {
 static const resource_int_t resources_int[] = {
     { "VERA", 0, RES_EVENT_STRICT, (resource_value_t)0,
       &vera_enabled, set_vera_enabled, NULL },
-    { "VERAbase", 0xde00, RES_EVENT_NO, NULL,
+    { "VERAbase", 0xdf00, RES_EVENT_NO, NULL,
       &vera_base_address, set_vera_base, NULL },
     { "VERAPSGVolume", 100, RES_EVENT_NO, NULL,
       &vera_psg_volume, set_vera_psg_volume, NULL },
@@ -438,7 +465,7 @@ static const cmdline_option_t cmdline_options[] =
       NULL, "Disable the VERA video card" },
     { "-verabase", SET_RESOURCE, CMDLINE_ATTRIB_NEED_ARGS,
       NULL, NULL, "VERAbase", NULL,
-      "<Base address>", "Base address of the VERA video card. (0xDE00: IO1, 0xDF00: IO2)" },
+      "<Base address>", "Base address of the VERA video card. (0xDF00: IO2 $DF00-$DF1F, default, with the GeoRAM 512 KB of the card; 0xDE00: IO1, no GeoRAM)" },
     { "-verasdcard", SET_RESOURCE, CMDLINE_ATTRIB_NEED_ARGS,
       NULL, NULL, "VERASDCardImage", NULL,
       "<Name>", "Raw SD card image (for example made by dd) on the SPI port of the VERA" },
