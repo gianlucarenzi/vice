@@ -289,7 +289,7 @@ static gboolean on_delete(GtkWidget *widget, GdkEvent *event, gpointer data)
 static void create_window(void)
 {
     vera_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(vera_window), "VERA");
+    gtk_window_set_title(GTK_WINDOW(vera_window), "VERA [C64]");
     gtk_window_set_default_size(GTK_WINDOW(vera_window), VERA_WIDTH, VERA_HEIGHT);
 #ifdef VERA_UI_OPENGL
     vera_area = gtk_gl_area_new();
