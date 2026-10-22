@@ -283,6 +283,7 @@ enum {
     VERA_SD_CMD17  = 17,
     VERA_SD_CMD18  = 18,
     VERA_SD_CMD24  = 24,
+    VERA_SD_CMD25  = 25,
     VERA_SD_CMD55  = 55,
     VERA_SD_CMD58  = 58,
     VERA_SD_ACMD13 = 0x80 | 13,
@@ -297,6 +298,7 @@ static int vera_sd_is_acmd = FALSE;
 static int vera_sd_is_idle = TRUE;
 static int vera_sd_is_initialized = FALSE;
 static int vera_sd_ongoing_multiblock_read = FALSE;
+static int vera_sd_ongoing_multiblock_write = FALSE;   /* CMD25: $FC blocks until $FD */
 static int vera_sd_selected = FALSE;
 static const UBYTE *vera_sd_response = NULL;
 static int vera_sd_response_length = 0;
@@ -672,6 +674,7 @@ static void vera_sd_reset_protocol(void)
     vera_sd_is_idle = TRUE;
     vera_sd_is_initialized = FALSE;
     vera_sd_ongoing_multiblock_read = FALSE;
+    vera_sd_ongoing_multiblock_write = FALSE;
     vera_sd_selected = FALSE;
     vera_sd_clear_response();
 }
@@ -790,6 +793,7 @@ static void vera_sd_select(int selected)
     if (!selected)
     {
         vera_sd_ongoing_multiblock_read = FALSE;
+        vera_sd_ongoing_multiblock_write = FALSE;
         vera_sd_clear_response();
     }
 }
@@ -843,8 +847,10 @@ static UBYTE vera_sd_handle_command(UBYTE cmd, const UBYTE *packet)
             vera_sd_ongoing_multiblock_read = FALSE;
         vera_sd_set_response_bytes(read_block_response, response_length);
         break;
+    case VERA_SD_CMD25:
     case VERA_SD_CMD24:
         vera_sd_lba = arg;
+        vera_sd_ongoing_multiblock_write = (cmd == VERA_SD_CMD25);
         if ((off_t)vera_sd_lba * 512 >= verax16_sdcard_size)
         {
             write_error_response[0] = 0x00u;
@@ -877,6 +883,16 @@ static UBYTE vera_sd_handle(UBYTE inbyte)
 
     if (!vera_sd_selected || verax16_sdcard_file == NULL)
         return 0xFFu;
+
+    /* CMD25 stop tran token: a stuff byte, then the card is busy for a while */
+    if (vera_sd_rxbuf_idx == 0 && inbyte == 0xFDu && vera_sd_ongoing_multiblock_write)
+    {
+        static const UBYTE stop_busy[9] = { 0xFFu, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+        vera_sd_ongoing_multiblock_write = FALSE;
+        vera_sd_set_response_bytes(stop_busy, (int)sizeof(stop_busy));
+        return 0xFFu;
+    }
 
     if (vera_sd_rxbuf_idx == 0 && inbyte == 0xFFu)
     {
@@ -923,20 +939,24 @@ static UBYTE vera_sd_handle(UBYTE inbyte)
     if (vera_sd_rxbuf_idx == 515)
     {
         vera_sd_rxbuf_idx = 0;
-        if (vera_sd_last_cmd == VERA_SD_CMD24 && vera_sd_rxbuf[0] == 0xFEu)
+        if ((vera_sd_last_cmd == VERA_SD_CMD24 && vera_sd_rxbuf[0] == 0xFEu) ||
+            (vera_sd_ongoing_multiblock_write && vera_sd_rxbuf[0] == 0xFCu))
         {
-            static const UBYTE data_response_ok[1] = { 0x05u };
-            static const UBYTE data_response_fail[1] = { 0x0Du };
+            /* data response token, then busy ($00) while the card programs the block */
+            static const UBYTE data_response_ok[9] = { 0x05u, 0, 0, 0, 0, 0, 0, 0, 0 };
+            static const UBYTE data_response_fail[9] = { 0x0Du, 0, 0, 0, 0, 0, 0, 0, 0 };
 
             if (verax16_sdcard_writable && vera_sd_seek_lba(vera_sd_lba))
             {
                 vera_sd_store_block(vera_sd_rxbuf + 1);
-                vera_sd_set_response_bytes(data_response_ok, 1);
+                vera_sd_set_response_bytes(data_response_ok, (int)sizeof(data_response_ok));
             }
             else
             {
-                vera_sd_set_response_bytes(data_response_fail, 1);
+                vera_sd_set_response_bytes(data_response_fail, (int)sizeof(data_response_fail));
             }
+            if (vera_sd_ongoing_multiblock_write)
+                vera_sd_lba++;
         }
     }
 
@@ -1095,11 +1115,13 @@ static unsigned int atari_line_rate_x100(void)
 #define VERA_MIDLINE_DC_STEP (12 * VERA_MIDLINE_X_SCALE)
 #define VERA_MIDLINE_FX_STEP (1 * VERA_MIDLINE_X_SCALE)
 
+/* composer.v: SCANLINE is y_counter_r, the line being RENDERED (shown + 1, + 2
+   interlaced), 9 bits (0 while line 511 is shown), pegged at 511 from line 512 on */
 static UWORD vera_scanline_read_value(void)
 {
     if (vera_scanline_raw >= VERA_SCANLINE_CLAMP_START)
         return VERA_SCANLINE_CLAMP_VALUE;
-    return vera_scanline_raw;
+    return (UWORD)((vera_scanline_raw + (VERA_COMPOSITE() ? 2u : 1u)) & 0x1FFu);
 }
 
 static int vera_midline_write_cost(int offset, int dcsel)
@@ -1222,7 +1244,13 @@ static void vera_maybe_trigger_line_irq(void)
 
 static UBYTE vera_compute_sprite_line_collisions(UWORD py)
 {
+    /* sprite_renderer.v: the collision is checked on every opaque pixel (x < 640)
+       of a sprite with a mask, but a sprite's mask goes into the line buffer only
+       where its pixel is written (opaque and above what is there), and only the
+       pixels the 798-clock render time reaches are drawn at all */
     UBYTE sprite_line_mask[640u];
+    UBYTE sprite_line_z[640u];
+    UBYTE draw_n[128];
     UBYTE collisions = 0;
     ULONG i;
     int line_y;
@@ -1235,6 +1263,8 @@ static UBYTE vera_compute_sprite_line_collisions(UWORD py)
     line_y = (((int)py - (int)vera_dc[1][2] * 2) * (int)vera_dc[0][2]) >> 7;
 
     memset(sprite_line_mask, 0, sizeof(sprite_line_mask));
+    memset(sprite_line_z, 0, sizeof(sprite_line_z));
+    VERA_VIDEO_SpriteDrawCounts(vera_vram, line_y, draw_n);
     for (i = 0; i < 128u; i++)
     {
         ULONG base = 0x1FC00u + i * 8u;
@@ -1259,7 +1289,7 @@ static UBYTE vera_compute_sprite_line_collisions(UWORD py)
         ULONG row_addr;
         int sx;
 
-        if (z_depth == 0 || coll_mask == 0u)
+        if (z_depth == 0)
             continue;
         if (x >= 0x400 - width) x -= 0x400;
         if (y >= 0x400 - height) y -= 0x400;
@@ -1279,6 +1309,8 @@ static UBYTE vera_compute_sprite_line_collisions(UWORD py)
             UBYTE color_idx;
             ULONG pixel_addr;
 
+            if (sx >= draw_n[i])
+                break;                           /* render time over */
             if (px < 0 || px >= 640)
                 continue;
 
@@ -1300,8 +1332,13 @@ static UBYTE vera_compute_sprite_line_collisions(UWORD py)
             if (color_idx == 0u)
                 continue;
 
-            collisions |= sprite_line_mask[px] & coll_mask;
-            sprite_line_mask[px] |= coll_mask;
+            if (coll_mask != 0u)
+                collisions |= sprite_line_mask[px] & coll_mask;
+            if (z_depth > sprite_line_z[px])     /* render_pixel: written */
+            {
+                sprite_line_z[px] = (UBYTE)z_depth;
+                sprite_line_mask[px] |= coll_mask;
+            }
         }
     }
 
@@ -1510,8 +1547,8 @@ static int vera_pcm_load_current_sample(void)
             }
             if (!vera_pcm_read_byte(&raw[0]) || !vera_pcm_read_byte(&raw[1]))
                 return FALSE;
-            vera_pcm_current_left = (int)((UWORD)raw[0] << 8);
-            vera_pcm_current_right = (int)((UWORD)raw[1] << 8);
+            vera_pcm_current_left = (int)(SWORD)((UWORD)raw[0] << 8);
+            vera_pcm_current_right = (int)(SWORD)((UWORD)raw[1] << 8);
         }
         else
         {
@@ -1523,7 +1560,7 @@ static int vera_pcm_load_current_sample(void)
             }
             if (!vera_pcm_read_byte(&raw[0]))
                 return FALSE;
-            mono = (int)((UWORD)raw[0] << 8);
+            mono = (int)(SWORD)((UWORD)raw[0] << 8);
             vera_pcm_current_left = mono;
             vera_pcm_current_right = mono;
         }
