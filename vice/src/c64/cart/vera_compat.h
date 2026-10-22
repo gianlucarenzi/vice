@@ -57,4 +57,10 @@ void vera_host_set_irq(int level);
 /* a VERA frame is complete (scanline 480): 640x480 pixels, 0xAARRGGBB */
 void vera_host_frame(const uint32_t *fb, int width, int height);
 
+/* the host CPU clock (in cycles) for time synchronization */
+unsigned int vera_host_cpu_clock(void);
+
+/* the host CPU frequency (in Hz) for time synchronization */
+unsigned int vera_host_cpu_hz(void);
+
 #endif

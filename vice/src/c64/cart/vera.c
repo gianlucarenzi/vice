@@ -159,6 +159,16 @@ void vera_host_frame(const uint32_t *fb, int width, int height)
     }
 }
 
+unsigned int vera_host_cpu_clock(void)
+{
+    return (unsigned int)maincpu_clk;
+}
+
+unsigned int vera_host_cpu_hz(void)
+{
+    return (unsigned int)machine_get_cycles_per_second();
+}
+
 void vera_set_ui_callbacks(vera_frame_callback_t frame, vera_enabled_callback_t enabled)
 {
     vera_ui_frame = frame;
