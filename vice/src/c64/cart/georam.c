@@ -88,7 +88,8 @@
  * used when selecting a save-file.
  *
  * The current emulation has the two registers mirrorred through the
- * range of $df80-$dffd
+ * range of $df80-$dffd, except with the VERA card, whose GeoRAM decodes
+ * them exactly at $dffe/$dfff (georam_set_exact_regs, vera.c)
  *
  * There is also a user-made clone of the GeoRAM called the NeoRAM,
  * it works in the same way as the GeoRAM but seems to have extra
@@ -409,6 +410,16 @@ void georam_set_max_size(int kb)
     if (georam_size_kb > kb) {
         resources_set_int("GEORAMsize", kb);
     }
+}
+
+/* Registers decoded exactly at $dffe/$dfff (no $df80-$dffd mirrors): the
+   GeoRAM of the VERA card, whose select latch is at $dffd.  C64 only. */
+void georam_set_exact_regs(int exact)
+{
+    if (machine_class == VICE_MACHINE_VIC20) {
+        return;
+    }
+    georam_io2_device.start_address = exact ? 0xdffe : 0xdf80;
 }
 
 static int set_georam_io_swap(int value, void *param)

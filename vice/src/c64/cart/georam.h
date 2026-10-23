@@ -42,6 +42,7 @@ int georam_enable(void);
 int georam_disable(void);
 void georam_powerup(void);
 void georam_set_max_size(int kb);
+void georam_set_exact_regs(int exact);
 
 int georam_read_snapshot_module(struct snapshot_s *s);
 int georam_write_snapshot_module(struct snapshot_s *s);

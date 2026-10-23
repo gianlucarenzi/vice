@@ -31,7 +31,10 @@
     640x480 VGA output, a 16 voice PSG, PCM audio and an SPI port for an SD
     card) on the expansion port: its 32 registers in IO1 ($DE00-$DE1F,
     images up to $DEFF, the card decodes A0-A4 and /IO1) or in IO2
-    ($DF00-$DF1F), its IRQ output on /IRQ. The picture has its own window,
+    ($DF00-$DF1F), its IRQ output on /IRQ.  The registers answer only while
+    the VERA is selected through the latch at $DFFD (write != 0 selects,
+    0 deselects), as on the VERA Module RBL-C64; the GeoRAM of the card is
+    always active. The picture has its own window,
     the VERA runs free on its own 25 MHz clock, asynchronous to the C64:
     VGA at 59.52 Hz, NTSC composite at 59.97 Hz (59.86 Hz in 240p), while
     the C64 runs at 50.12 Hz (PAL) or 59.83 Hz (NTSC).
@@ -95,6 +98,10 @@ static int vera_irq_level = 0;
 
 static unsigned int vera_sound_speed = 0; /* sample rate of the host mixer */
 
+/* $DFFD latch: the VERA answers only while selected.  Cleared at power-on,
+   kept across a reset of the C64 (the card does not see it). */
+static int vera_selected = 0;
+
 static vera_frame_callback_t vera_ui_frame = NULL;
 static vera_enabled_callback_t vera_ui_enabled = NULL;
 
@@ -104,6 +111,8 @@ static uint8_t vera_read(uint16_t addr);
 static uint8_t vera_peek(uint16_t addr);
 static void vera_store(uint16_t addr, uint8_t value);
 static int vera_dump(void);
+static uint8_t vera_latch_peek(uint16_t addr);
+static void vera_latch_store(uint16_t addr, uint8_t value);
 
 static io_source_t vera_device = {
     CARTRIDGE_NAME_VERA,      /* name of the device */
@@ -123,7 +132,25 @@ static io_source_t vera_device = {
     IO_MIRROR_MASK            /* the registers are mirrored by the address mask */
 };
 
+static io_source_t vera_latch_device = {
+    CARTRIDGE_NAME_VERA,      /* name of the device */
+    IO_DETACH_RESOURCE,       /* use resource to detach the device when involved in a read-collision */
+    "VERA",                   /* resource to set to '0' */
+    0xdffd, 0xdffd, 0x00,     /* range for the device: the VERA select latch at $dffd */
+    0,                        /* read is never valid, the latch is write only */
+    vera_latch_store,         /* store function */
+    NULL,                     /* NO poke function */
+    NULL,                     /* NO read function */
+    vera_latch_peek,          /* peek function */
+    vera_dump,                /* device state information dump function */
+    CARTRIDGE_VERA,           /* cartridge ID */
+    IO_PRIO_NORMAL,           /* normal priority, device read needs to be checked for collisions */
+    0,                        /* insertion order, gets filled in by the registration function */
+    IO_MIRROR_NONE            /* NO mirroring */
+};
+
 static io_source_list_t *vera_list_item = NULL;
+static io_source_list_t *vera_latch_list_item = NULL;
 
 static export_resource_t export_res = {
     CARTRIDGE_NAME_VERA, 0, 0, NULL, &vera_device, CARTRIDGE_VERA
@@ -298,7 +325,8 @@ int vera_cart_enabled(void)
 }
 
 /* The card carries a GeoRAM of 256 KB: window $de00-$deff, registers
-   $dffe/$dfff (mirrors $df80-$dffd), with VERA at $df00-$df1f.  Enabled
+   exactly at $dffe/$dfff (no mirrors: the VERA latch is at $dffd), with
+   VERA at $df00-$df1f.  Always active, independent of the latch.  Enabled
    with the card when VERA is at $df00, and while the card is there the
    GeoRAM cannot be larger (georam_set_max_size); with VERA at $de00 the two
    would collide, so there is none. */
@@ -311,6 +339,7 @@ static void vera_georam(int on)
         int en = 0;
         georam_set_max_size(VERA_GEORAM_KB);
         resources_set_int("GEORAMsize", VERA_GEORAM_KB);
+        georam_set_exact_regs(1);
         resources_get_int("GEORAM", &en);
         if (!en) {
             if (resources_set_int("GEORAM", 1) == 0) {
@@ -324,6 +353,7 @@ static void vera_georam(int on)
             vera_georam_on = 0;
         }
         georam_set_max_size(4096);
+        georam_set_exact_regs(0);
     }
 }
 
@@ -336,6 +366,8 @@ static int set_vera_enabled(int value, void *param)
             return -1;
         }
         vera_list_item = io_source_register(&vera_device);
+        vera_latch_list_item = io_source_register(&vera_latch_device);
+        vera_selected = 0;
         vera_core_enabled = TRUE;
         vera_core_set_debuglevel(vera_debug_level);
         vera_core_set_psg_volume(vera_psg_volume);
@@ -359,6 +391,10 @@ static int set_vera_enabled(int value, void *param)
             export_remove(&export_res);
             io_source_unregister(vera_list_item);
             vera_list_item = NULL;
+        }
+        if (vera_latch_list_item != NULL) {
+            io_source_unregister(vera_latch_list_item);
+            vera_latch_list_item = NULL;
         }
         vera_stop();
         vera_core_shutdown();
@@ -529,8 +565,14 @@ void vera_reset(void)
 
 /* ---------------------------------------------------------------------*/
 
+/* VERA registers: chip select only while the VERA is selected ($DFFD) */
 static uint8_t vera_read(uint16_t addr)
 {
+    if (!vera_selected) {
+        vera_device.io_source_valid = 0;
+        return 0;
+    }
+    vera_device.io_source_valid = 1;
     return vera_core_read(addr & 0x1f, 0);
 }
 
@@ -541,14 +583,35 @@ static uint8_t vera_peek(uint16_t addr)
 
 static void vera_store(uint16_t addr, uint8_t value)
 {
-    vera_core_write(addr & 0x1f, value);
+    if (vera_selected) {
+        vera_core_write(addr & 0x1f, value);
+    }
+}
+
+/* $DFFD: write != 0 selects the VERA, 0 deselects it */
+static void vera_latch_store(uint16_t addr, uint8_t value)
+{
+    int sel = value != 0;
+
+    if (sel != vera_selected) {
+        vera_selected = sel;
+        if (vera_debug_level >= 1) {
+            log_message(vera_log, "VERA %s ($%02X written to $DFFD)", sel ? "selected" : "deselected", value);
+        }
+    }
+}
+
+static uint8_t vera_latch_peek(uint16_t addr)
+{
+    return (uint8_t)vera_selected;
 }
 
 static int vera_dump(void)
 {
     int i;
 
-    mon_out("VERA at $%04X, IRQ %s\n", (unsigned int)vera_base_address, vera_irq_level ? "asserted" : "released");
+    mon_out("VERA at $%04X, %s ($DFFD), IRQ %s\n", (unsigned int)vera_base_address,
+            vera_selected ? "selected" : "deselected", vera_irq_level ? "asserted" : "released");
     for (i = 0; i < VERA_CORE_REG_COUNT; i++) {
         mon_out("%s%02X", (i & 15) ? " " : (i ? "\n" : ""), vera_core_read(i, 1));
     }
@@ -566,13 +629,14 @@ static int vera_dump(void)
    DWORD | alarm    | cycles to the next VERA host line (since 0.1)
    DWORD | size     | size of the chip state (since 0.1)
    ARRAY | state    | the chip state, VRAM included (vera_core_state_save, since 0.1)
+   BYTE  | selected | $DFFD latch, VERA selected (since 0.2; older snapshots: 1)
 
    The SD card image is not in the snapshot: VERASDCardImage stays as it is.
  */
 
 static const char snap_module_name[] = "CARTVERA";
 #define SNAP_MAJOR   0
-#define SNAP_MINOR   1
+#define SNAP_MINOR   2
 
 int vera_snapshot_write_module(snapshot_t *s)
 {
@@ -590,7 +654,8 @@ int vera_snapshot_write_module(snapshot_t *s)
     if (SMW_DW(m, (uint32_t)vera_base_address) >= 0
         && SMW_DW(m, (uint32_t)(vera_alarm_clk - maincpu_clk)) >= 0
         && SMW_DW(m, (uint32_t)size) >= 0
-        && SMW_BA(m, state, (unsigned int)size) >= 0) {
+        && SMW_BA(m, state, (unsigned int)size) >= 0
+        && SMW_B(m, (uint8_t)vera_selected) >= 0) {
         rc = 0;
     }
     lib_free(state);
@@ -609,6 +674,7 @@ int vera_snapshot_read_module(snapshot_t *s)
     uint32_t alarm_delta = VERA_HOST_PERIOD;
     uint32_t size = 0;
     uint8_t *state = NULL;
+    uint8_t selected = 1;   /* before 0.2 the registers always answered */
 
     m = snapshot_module_open(s, snap_module_name, &vmajor, &vminor);
     if (m == NULL) {
@@ -634,12 +700,18 @@ int vera_snapshot_read_module(snapshot_t *s)
             goto fail;
         }
     }
+    if (!snapshot_version_is_smaller(vmajor, vminor, 0, 2)) {
+        if (SMR_B(m, &selected) < 0) {
+            goto fail;
+        }
+    }
     snapshot_module_close(m);
 
     if (set_vera_base(base, NULL) < 0 || vera_enable() < 0) {
         lib_free(state);
         return -1;
     }
+    vera_selected = selected ? 1 : 0;
     if (state != NULL) {
         int rc = vera_core_state_load(state, size);
 
