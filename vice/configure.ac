@@ -89,6 +89,7 @@ VICE_ARG_WITH_LIST(mpg123,                  [  --with-mpg123           use MPG12
 VICE_ARG_WITH_LIST(oss,                     [  --with-oss              use the OSS sound system])
 VICE_ARG_WITH_LIST(pulse,                   [  --without-pulse         do not use PulseAudio sound system])
 VICE_ARG_WITH_LIST(resid,                   [  --without-resid         do not use the reSID engine])
+VICE_ARG_WITH_LIST(residfp,                 [  --without-residfp       do not use the reSIDfp engine])
 VICE_ARG_WITH_LIST(sdlsound,                [  --with-sdlsound         use SDL sound system])
 VICE_ARG_WITH_LIST(sun,                     [  --without-sun           do not use the sun/netbsd sound system])
 VICE_ARG_WITH_LIST(vorbis,                  [  --with-vorbis           use Ogg/Vorbis support])
@@ -133,12 +134,16 @@ VICE_ARG_ENABLE_LIST(debug-threads,         [  --enable-debug-threads  enable de
 VICE_ARG_ENABLE_LIST(x64,                   [  --enable-x64            enable building of the old x64 emulator [[default=no]]])
 VICE_ARG_ENABLE_LIST(x64-image,             [  --enable-x64-image      enable X64 image support [[default=no]]])
 VICE_ARG_ENABLE_LIST(optimization,          [  --disable-optimization  disable code optimization by passing -O0 [[default=no]]])
+VICE_ARG_ENABLE_LIST(sanitizer,             [  --enable-sanitizer      enable address- and UB sanitizer [[default=no]]])
 VICE_ARG_ENABLE_LIST(extra-warnings,        [  --enable-extra-warnings enable anal warnings [[default=no]]])
 VICE_ARG_ENABLE_LIST(io-simulation,         [  --enable-io-simulation  enable i/o simulation devices [[default=no]]])
 VICE_ARG_ENABLE_LIST(experimental-devices,  [  --enable-experimental-devices    enable experimental device emulation [[default=no]]])
 
 dnl Needed for WIC64
 VICE_ARG_WITH_LIST(libcurl,                 [  --without-libcurl       disable libcurl support [[default=no]]])
+
+dnl Needed for USBSID
+VICE_ARG_WITH_LIST(libusb,                  [  --without-libusb        disable libusb support [[default=no]]])
 
 dnl
 dnl UI options
@@ -170,6 +175,16 @@ if test x"$enable_optimization" = "xno"; then
   VICE_CFLAGS="-g -O0"
   VICE_CXXFLAGS="-g -O0"
   VICE_OBJCFLAGS="-g -O0"
+fi
+
+dnl
+dnl Check for enabling address- and UB sanitizer with --enable-sanitizer
+dnl
+if test x"$enable_sanitizer" = "xyes"; then
+  VICE_CFLAGS="-g -O0 -fno-common -fno-omit-frame-pointer -fsanitize=address,undefined -fsanitize-address-use-after-scope"
+  VICE_CXXFLAGS="-g -O0 -fno-common -fno-omit-frame-pointer -fsanitize=address,undefined -fsanitize-address-use-after-scope"
+  VICE_OBJCFLAGS="-g -O0 -fsanitize=address,undefined"
+  VICE_LDFLAGS="-fsanitize=address,undefined"
 fi
 
 
@@ -445,6 +460,7 @@ HAVE_DYNLIB_SUPPORT_TOO="no "
 HAVE_FASTSID_SUPPORT="no "
 HAVE_FONTCONFIG_SUPPORT="no "
 HAVE_GIF_SUPPORT="no "
+HAVE_LIBUSB_SUPPORT="no "
 HAVE_USBSID_SUPPORT="no "
 HAVE_HARDSID_SUPPORT="no "
 HAVE_HWSCALE_SUPPORT="no "
@@ -462,6 +478,7 @@ HAVE_PORTSID_SUPPORT="no "
 HAVE_RAWNET_SUPPORT="no "
 HAVE_REALDEVICE_SUPPORT="no "
 HAVE_RESID_SUPPORT="no "
+HAVE_RESIDFP_SUPPORT="no "
 HAVE_RS232DEV_SUPPORT="no "
 HAVE_RS232NET_SUPPORT="no "
 HAVE_OPENMP_SUPPORT="no "
@@ -965,23 +982,12 @@ darwin*)
   dnl disable toolchain checking for macosx
   toolchain_check=no
 
-  dnl The vice build system builds empty libs for things that are configured out,
-  dnl then links all of them together. This causes ranlib to complain like:
-  dnl
-  dnl   file: libarch.a(joy-win32-dinput-handle.o) has no symbols
-  dnl
-  dnl This warning can be disabled by passing -no_warning_for_no_symbols to ranlib.
-  dnl ar also calls ranlib, and there is no way to pass the argument.
-  dnl
-  dnl You can split an 'ar cru' call into separate ar and ranlib calls, but,
-  dnl sometimes ranlib will invoke libtool which has its own warning we can't
-  dnl change without major build system changes.
-  dnl
-  dnl Given all that it's simpler to just grep -v out the warnings we don't want,
-  dnl which these scripts do.
-
-  RANLIB="\$(top_srcdir)/src/arch/shared/macOS-wrap-ranlib.sh"
-  AR="\$(top_srcdir)/src/arch/shared/macOS-wrap-ar.sh"
+  dnl Configured-out sources can produce objects and libraries with no symbols.
+  dnl Defer archive index generation to the explicit ranlib step so that we can
+  dnl pass its warning suppression flag instead of letting ar invoke it.
+  ARFLAGS="$ARFLAGS -S"
+  AR_FLAGS="$AR_FLAGS -S"
+  RANLIB="$RANLIB -no_warning_for_no_symbols"
 
   dnl
   dnl Support targeting a specific macOS version
@@ -1873,10 +1879,12 @@ dnl FastSID is disabled by default, so we check against "yes", ReSID is enabled
 dnl by default so we check against "no" ($with_resid being empty means the
 dnl default, ie "yes")
 dnl
+dnl FIXME: residfp?
+dnl
 dnl Remove this check to allow building without a SID engine
-if test x"$with_fastsid" != "xyes" -a x"$with_resid" = "xno"; then
-  AC_MSG_ERROR([Neither FastSID nor ReSID sound engine enabled, please enable at least one.])
-fi
+dnl if test x"$with_fastsid" != "xyes" -a x"$with_resid" = "xno"; then
+dnl   AC_MSG_ERROR([Neither FastSID nor ReSID sound engine enabled, please enable at least one.])
+dnl fi
 
 
 dnl FastSID
@@ -1989,6 +1997,89 @@ AC_SUBST(RESID_DTV_DIR)
 AC_SUBST(RESID_DTV_LIBS)
 AC_SUBST(RESID_DTV_INCLUDES)
 AC_SUBST(RESID_DTV_DEP)
+
+
+RESIDFP_DIR=
+RESIDFP_LIBS=
+RESIDFP_INCLUDES=
+RESIDFP_DEP=
+
+dnl Set linker to C++ compiler/linker: even SDL builds use C++ code (linenoise-ng)
+LINKCC='$(CXX)'
+
+dnl disable reSIDfp for certain platforms
+
+RESIDFPSUB=""
+
+if test x"$with_residfp" = "xno"; then
+  dnl Do not attempt to configure reSIDfp.
+  dnl NOTE: no_recursion is set because directories specified with
+  dnl AC_CONFIG_SUBDIRS are always recursed into regardless of where the
+  dnl macro is used.
+  dnl Another workaround must be found if other self-contained packages go
+  dnl into VICE.
+
+  dnl A workaround for an autoconf bug when not using/checking the C++
+  dnl compiler, we'll define am__fastdepCXX_TRUE as #
+  am__fastdepCXX_TRUE=#
+  am__fastdepCXX_FALSE=
+else
+  AC_LANG_SAVE
+  AC_LANG_CPLUSPLUS
+  AC_PROG_CXX([g++ clang++ cc])
+
+  dnl disable residfp when no C++ compiler is found
+  if test x"$CXX" != "x" ; then
+    LINKCC='$(CXX)'
+
+    dnl Set CXXFLAGS. Use -fno-exceptions for G++ if supported.
+    if test "$ac_test_CXXFLAGS" != set; then
+      if test "$GXX" = yes; then
+        old_CXXFLAGS=$CXXFLAGS
+        CXXFLAGS="$CXXFLAGS -fno-exceptions"
+        AC_MSG_CHECKING([whether the C++ compiler ($CXX $CXXFLAGS $LDFLAGS) works])
+        AC_TRY_COMPILE([],
+                       [ int test; ],
+                       [ AC_MSG_RESULT(yes) ],
+                       [ AC_MSG_RESULT(no)
+                         CXXFLAGS=$old_CXXFLAGS
+                         ])
+      fi
+    fi
+    AC_PROG_CXXCPP
+  fi
+
+  if test x"$with_residfp" = "xyes" -o x"$with_residfp" = "x"; then
+    AC_DEFINE(HAVE_RESIDFP,,[This version provides ReSIDfp support.])
+    HAVE_RESIDFP_SUPPORT="yes"
+    AX_SUBDIRS_CONFIGURE([src/lib/libresidfp], [[--disable-option-checking],[--disable-tests]])
+    RESIDFP_DIR=lib/libresidfp
+    RESIDFP_LIBS="\$(top_builddir)/src/lib/libresidfp/libresidfp.a"
+    RESIDFP_INCLUDES="-I\$(top_srcdir)/src/lib/libresidfp -I\$(top_builddir)/src/lib/libresidfp/src"
+    RESIDFP_DEP=libresidfp
+    RESIDFPSUB=lib/libresidfp
+  fi
+  AC_LANG_RESTORE
+fi
+
+AC_SUBST(RESIDFPSUB)
+
+if test x"$RESIDFPSUB" = "xlib/libresidfp"; then
+  AM_CONDITIONAL(RESIDFP_DIR_USED, true)
+else
+  AM_CONDITIONAL(RESIDFP_DIR_USED, false)
+fi
+
+AC_SUBST(LINKCC)
+
+AM_CONDITIONAL(HAVE_RESIDFP, test x"$with_residfp" != "xno")
+
+AC_SUBST(RESIDFP_DIR)
+AC_SUBST(RESIDFP_LIBS)
+AC_SUBST(RESIDFP_INCLUDES)
+AC_SUBST(RESIDFP_DEP)
+
+
 
 dnl Check for typedefs, structures, and compiler characteristics.
 AC_CHECK_HEADERS(sys/types.h)
@@ -2206,10 +2297,13 @@ dnl
 dnl 2023-11-18: check relaxed to accept any version, the wic64 code uses an
 dnl #ifdef to check for `CURLSSLOPT_NATIVE_CA` to see if the option can be
 dnl enabled. See https://sourceforge.net/p/vice-emu/bugs/1964/
+dnl
+dnl 2026-02-05: add check for >= 7.66.0 for `curl_multi_poll()
+dnl
 if test x"$with_libcurl" != "xno"; then
-  PKG_CHECK_MODULES(libcurl, [libcurl], [have_libcurl=yes], [have_libcurl=no])
+  PKG_CHECK_MODULES(libcurl, [libcurl >= 7.66.0], [have_libcurl=yes], [have_libcurl=no])
   if test x"$have_libcurl" = "xno"; then
-    AC_MSG_ERROR([libcurl support requested, but libcurl was not found.])
+    AC_MSG_ERROR([libcurl (>= 7.66.0) support requested, but libcurl was not found.])
   fi
   HAVE_LIBCURL_SUPPORT="yes"
   VICE_CFLAGS="$VICE_CFLAGS $libcurl_CFLAGS"
@@ -2955,7 +3049,7 @@ if test x"$is_unix" = "xyes"; then
   fi
 
   dnl usbsid required libraries and headers
-  if test x"$enable_usbsid" != "xno" ; then
+  if test x"$with_libusb" != "xno" ; then
     PKG_PROG_PKG_CONFIG
     UNIX_USBSID_HEADER_PRESENT=yes
     AC_CHECK_HEADERS(libusb-1.0/libusb.h,,[UNIX_USBSID_HEADER_PRESENT=no],)
@@ -3479,6 +3573,7 @@ AC_OUTPUT([Makefile
            data/common/Makefile
            data/GLSL/Makefile
            data/hotkeys/Makefile
+           data/joymaps/Makefile
            doc/Makefile
            doc/building/Makefile
            doc/html/Makefile
@@ -3669,6 +3764,7 @@ echo "SOUND"
 echo "-----"
 echo "FastSID support              : $HAVE_FASTSID_SUPPORT (--with/without-fastsid)"
 echo "ReSID support                : $HAVE_RESID_SUPPORT (--with/without-resid)"
+echo "ReSIDfp support              : $HAVE_RESIDFP_SUPPORT (--with/without-residfp)"
 echo "New 8580 filter support      : $USE_NEW_8580_FILTER (--enable/disable-new8580filter)"
 echo "PortAudio sound input support: $USE_PORTAUDIO_SUPPORT (--with/without-portaudio)"
 
@@ -3778,7 +3874,7 @@ echo "-----"
 if test x"$real_arch" = "xUnix" -o x"$real_arch" = "xWin32"; then
   echo "Real device (OpenCBM support)    : $HAVE_REALDEVICE_SUPPORT (--enable/disable-realdevice)"
 fi
-echo "X64 image support                : $HAVE_X64_IMAGE_SUPPORT (--enable/disable--x64-image)"
+echo "X64 image support                : $HAVE_X64_IMAGE_SUPPORT (--enable/disable-x64-image)"
 
 dnl echo ""
 dnl echo "MONITOR"
@@ -3800,6 +3896,8 @@ fi
 if test x"$real_arch" = "xUnix" -o x"$real_arch" = "xWin32"; then
     echo "libieee1284 support               : $HAVE_LIBIEEE1284_SUPPORT (--with/--wihout-libieee1284)"
 fi
+
+echo "libusb support                    : $HAVE_LIBUSB_SUPPORT (--with/-without-libusb)"
 
 
 echo ""

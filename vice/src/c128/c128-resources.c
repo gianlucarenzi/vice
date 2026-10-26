@@ -494,14 +494,18 @@ static int set_basichi_rom_name(const char *val, void *param)
     return 0;
 }
 
+/*
+ * sets up "Kernal64Name" (kernal64_rom_name)
+ */
 static int set_kernal64_rom_name(const char *val, void *param)
 {
-    if (util_string_set(&kernal64_rom_name, val)) {
-        return 0;
+    if (c128rom_load_kernal64(val) < 0) {
+        return -1;
     }
 
-    if (c128rom_load_kernal64(kernal64_rom_name) < 0) {
-        return -1;
+    /* set resource name (only when load succeeded) */
+    if (util_string_set(&kernal64_rom_name, val)) {
+        return 0;
     }
 
     if (c128rom_kernal64_setup() < 0) {
@@ -701,6 +705,10 @@ static const resource_int_t resources_int[] = {
       (int *)&sid7_address_start, sid_set_sid7_address, NULL },
     { "Sid8AddressStart", 0xdfc0, RES_EVENT_SAME, NULL,
       (int *)&sid8_address_start, sid_set_sid8_address, NULL },
+    { "Sid9AddressStart", 0xde20, RES_EVENT_SAME, NULL,
+      (int *)&sid9_address_start, sid_set_sid9_address, NULL },
+    { "Sid10AddressStart", 0xdf20, RES_EVENT_SAME, NULL,
+      (int *)&sid10_address_start, sid_set_sid10_address, NULL },
     { "C128FullBanks", 0, RES_EVENT_NO, NULL,
       (int *)&c128_full_banks, set_c128_full_banks, NULL },
     { "C128HideVDC", 0, RES_EVENT_NO, NULL,
@@ -726,21 +734,23 @@ int c128_resources_init(void)
 void c128_resources_shutdown(void)
 {
     lib_free(chargen_int_rom_name);
-    lib_free(chargen_de_rom_name);
-    lib_free(chargen_fr_rom_name);
-    lib_free(chargen_se_rom_name);
     lib_free(chargen_ch_rom_name);
+    lib_free(chargen_de_rom_name);
+    lib_free(chargen_fi_rom_name);
+    lib_free(chargen_fr_rom_name);
+    lib_free(chargen_it_rom_name);
     lib_free(chargen_no_rom_name);
+    lib_free(chargen_se_rom_name);
     lib_free(basiclo_rom_name);
     lib_free(basichi_rom_name);
+    lib_free(kernal64_rom_name);
+    lib_free(basic64_rom_name);
     lib_free(kernal_int_rom_name);
+    lib_free(kernal_ch_rom_name);
     lib_free(kernal_de_rom_name);
     lib_free(kernal_fi_rom_name);
     lib_free(kernal_fr_rom_name);
     lib_free(kernal_it_rom_name);
     lib_free(kernal_no_rom_name);
     lib_free(kernal_se_rom_name);
-    lib_free(kernal_ch_rom_name);
-    lib_free(basic64_rom_name);
-    lib_free(kernal64_rom_name);
 }

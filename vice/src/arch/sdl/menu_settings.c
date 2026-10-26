@@ -174,13 +174,15 @@ static UI_MENU_CALLBACK(radio_KeymapIndex_callback)
         /* FIXME: update keyboard type menu (PET/C128) */
         resources_touch("KeyboardMapping");
         uikeyboard_update_mapping_menu();   /* host layout */
-        uikeyboard_update_index_menu();     /* mapping type (self) */
+        /* NOTE: don't update the parent menu while it is being used, this
+                 causes funky errors */
+        /*uikeyboard_update_index_menu();*/ /* mapping type (self) */
     }
     return res;
 }
 
 /* mapping type ("KeymapIndex") */
-static ui_menu_entry_t *keymap_index_submenu;
+static ui_menu_entry_t *keymap_index_submenu = NULL;
 
 static const ui_menu_entry_t keymap_index_submenu_entries[] = {
     {   .string   = "Symbolic",
@@ -221,16 +223,17 @@ void uikeyboard_update_index_menu(void)
 
     if(settings_manager_menu[SETTINGS_ACTIVE_KEYMAP_IDX].data) {
         lib_free(settings_manager_menu[SETTINGS_ACTIVE_KEYMAP_IDX].data);
+        settings_manager_menu[SETTINGS_ACTIVE_KEYMAP_IDX].data = NULL;
     }
 
-    entry = keymap_index_submenu = lib_malloc(sizeof(ui_menu_entry_t) * (5));
+    keymap_index_submenu = entry = lib_malloc(sizeof(ui_menu_entry_t) * (5));
+    memset(keymap_index_submenu, 0, sizeof(ui_menu_entry_t) * 5);
     for (idx = 0; idx < 4; idx++) {
         if (!((idx < 2) && (keyboard_is_keymap_valid(idx, mapping, type) < 0))) {
             memcpy(entry, &keymap_index_submenu_entries[idx], sizeof(ui_menu_entry_t));
             entry++;
         }
     }
-    memset(entry, 0, sizeof(ui_menu_entry_t));
     settings_manager_menu[SETTINGS_ACTIVE_KEYMAP_IDX].data = keymap_index_submenu;
 }
 
@@ -285,8 +288,14 @@ void uikeyboard_menu_create(void)
 
 void uikeyboard_menu_shutdown(void)
 {
-    lib_free(settings_manager_menu[SETTINGS_ACTIVE_KEYMAP_IDX].data);
-    lib_free(settings_manager_menu[SETTINGS_KEYBOARD_MAPPING_IDX].data);
+    if (settings_manager_menu[SETTINGS_ACTIVE_KEYMAP_IDX].data) {
+        lib_free(settings_manager_menu[SETTINGS_ACTIVE_KEYMAP_IDX].data);
+        settings_manager_menu[SETTINGS_ACTIVE_KEYMAP_IDX].data = NULL;
+    }
+    if (settings_manager_menu[SETTINGS_KEYBOARD_MAPPING_IDX].data) {
+        lib_free(settings_manager_menu[SETTINGS_KEYBOARD_MAPPING_IDX].data);
+        settings_manager_menu[SETTINGS_KEYBOARD_MAPPING_IDX].data = NULL;
+    }
 }
 
 static UI_MENU_CALLBACK(load_sym_keymap_callback)
@@ -393,7 +402,7 @@ static UI_MENU_CALLBACK(save_joymap_callback)
             return NULL;
         }
 
-        if (joy_arch_mapping_dump(file)) {
+        if (joy_arch_mapping_dump(file, NULL)) {
             ui_error("Cannot save joymap.");
         } else {
             ui_message("Joymap saved.");
@@ -402,6 +411,7 @@ static UI_MENU_CALLBACK(save_joymap_callback)
     return NULL;
 }
 
+#if 0
 static UI_MENU_CALLBACK(save_joymap_to_callback)
 {
     if (activated) {
@@ -410,7 +420,7 @@ static UI_MENU_CALLBACK(save_joymap_to_callback)
         name = sdl_ui_file_selection_dialog("Choose joystick map file", FILEREQ_MODE_SAVE_FILE);
 
         if (name != NULL) {
-            if (joy_arch_mapping_dump(name) < 0) {
+            if (joy_arch_mapping_dump(name, NULL) < 0) {
                 ui_error("Cannot save joymap.");
             } else {
                 ui_message("Joymap saved.");
@@ -420,6 +430,7 @@ static UI_MENU_CALLBACK(save_joymap_to_callback)
     }
     return NULL;
 }
+#endif
 
 static UI_MENU_CALLBACK(load_joymap_callback)
 {
@@ -430,7 +441,7 @@ static UI_MENU_CALLBACK(load_joymap_callback)
             return NULL;
         }
 
-        if (joy_arch_mapping_load(file)) {
+        if (joy_arch_mapping_load(file, NULL)) {
             ui_error("Cannot load joymap.");
         } else {
             ui_message("Joymap loaded.");
@@ -439,6 +450,7 @@ static UI_MENU_CALLBACK(load_joymap_callback)
     return NULL;
 }
 
+#if 0
 static UI_MENU_CALLBACK(load_joymap_from_callback)
 {
     if (activated) {
@@ -457,6 +469,7 @@ static UI_MENU_CALLBACK(load_joymap_from_callback)
     }
     return NULL;
 }
+#endif
 #endif
 
 UI_MENU_DEFINE_TOGGLE(SaveResourcesOnExit)
@@ -654,10 +667,11 @@ ui_menu_entry_t settings_manager_menu[] = {
 #ifdef HAVE_SDL_NUMJOYSTICKS
     SDL_MENU_ITEM_SEPARATOR,
 
-    {   .string   = "Save joystick map",
+    {   .string   = "Save default joystick map",
         .type     = MENU_ENTRY_OTHER,
         .callback = save_joymap_callback,
     },
+#if 0
     {   .string   = "Save joystick map to",
         .type     = MENU_ENTRY_OTHER,
         .callback = save_joymap_to_callback
@@ -666,7 +680,8 @@ ui_menu_entry_t settings_manager_menu[] = {
         .type     = MENU_ENTRY_OTHER,
         .callback = load_joymap_from_callback
     },
-    {   .string   = "Load joystick map",
+#endif
+    {   .string   = "Load default joystick map",
         .type     = MENU_ENTRY_OTHER,
         .callback = load_joymap_callback
     },

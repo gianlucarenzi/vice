@@ -33,6 +33,7 @@
 
 #include "catweaselmkiii.h"
 #include "hardsid.h"
+#include "lib.h"
 #include "log.h"
 #include "machine.h"
 #ifdef HAVE_PARSID
@@ -47,6 +48,14 @@
 #include "sound.h"
 #include "types.h"
 
+/*#define DEBUG_SIDRES*/
+
+#ifdef DEBUG_SIDRES
+#define DBG(x)  log_printf x
+#else
+#define DBG(x)
+#endif
+
 /* Resource handling -- Added by Ettore 98-04-26.  */
 
 /* FIXME: We need sanity checks!  And do we really need all of these
@@ -54,10 +63,15 @@
 
 /* #define SID_ENGINE_MODEL_DEBUG */
 
+#if defined(HAVE_FASTSID) || defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP)
 static int sid_filters_enabled;       /* app_resources.sidFilters */
+#endif
 static int sid_model;                 /* app_resources.sidModel */
-#if defined(HAVE_RESID)
+static int sid_chip_model[SOUND_SIDS_MAX]; /* Sid2Model and up by chipno, [0] unused */
+#if defined(HAVE_RESID) || defined(HAVE_RESIDFP)
 static int sid_resid_sampling;
+#endif
+#if defined(HAVE_RESID)
 static int sid_resid_passband;
 static int sid_resid_gain;
 static int sid_resid_filter_bias;
@@ -65,6 +79,13 @@ static int sid_resid_8580_passband;
 static int sid_resid_8580_gain;
 static int sid_resid_8580_filter_bias;
 static int sid_resid_enable_raw_output;
+#endif
+#if defined(HAVE_RESIDFP)
+static int sid_residfp_6581_old_caps;
+static int sid_residfp_6581_filter_curve;
+static int sid_residfp_6581_filter_range;
+static int sid_residfp_8580_filter_curve;
+static int sid_residfp_combined_waveform_strength;
 #endif
 int sid_stereo = 0;
 int checking_sid_stereo;
@@ -82,6 +103,10 @@ unsigned int sid7_address_start;
 unsigned int sid7_address_end;
 unsigned int sid8_address_start;
 unsigned int sid8_address_end;
+unsigned int sid9_address_start;
+unsigned int sid9_address_end;
+unsigned int sid10_address_start;
+unsigned int sid10_address_end;
 static int sid_engine;
 #ifdef HAVE_HARDSID
 static int sid_hardsid_main;
@@ -98,8 +123,12 @@ static int set_sid_engine(int set_engine, void *param)
 {
     int engine = set_engine;
 
+    DBG(("set_sid_engine: %d\n", engine));
+
     if (engine == SID_ENGINE_DEFAULT) {
-#ifdef HAVE_RESID
+#if defined(HAVE_RESIDFP)
+        engine = SID_ENGINE_RESIDFP;
+#elif defined(HAVE_RESID)
         engine = SID_ENGINE_RESID;
 #else
         engine = SID_ENGINE_FASTSID;
@@ -112,6 +141,9 @@ static int set_sid_engine(int set_engine, void *param)
 #endif
 #ifdef HAVE_RESID
         case SID_ENGINE_RESID:
+#endif
+#ifdef HAVE_RESIDFP
+        case SID_ENGINE_RESIDFP:
 #endif
 #ifdef HAVE_CATWEASELMKIII
         case SID_ENGINE_CATWEASELMKIII:
@@ -146,6 +178,7 @@ static int set_sid_engine(int set_engine, void *param)
     return 0;
 }
 
+#if defined(HAVE_FASTSID) || defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP)
 static int set_sid_filters_enabled(int val, void *param)
 {
     sid_filters_enabled = val ? 1 : 0;
@@ -154,6 +187,7 @@ static int set_sid_filters_enabled(int val, void *param)
 
     return 0;
 }
+#endif
 
 #if defined(HAVE_RESID) || defined(HAVE_RESID_DTV)
 static int set_sid_resid_enable_raw_output(int val, void *param)
@@ -211,6 +245,43 @@ SET_SIDx_ADDRESS(5)
 SET_SIDx_ADDRESS(6)
 SET_SIDx_ADDRESS(7)
 SET_SIDx_ADDRESS(8)
+SET_SIDx_ADDRESS(9)
+SET_SIDx_ADDRESS(10)
+
+static int set_sid_chip_model(int val, void *param)
+{
+    int chipno = vice_ptr_to_int(param);
+
+    switch (val) {
+        case SID_MODEL_SAME_AS_FIRST:
+        case SID_MODEL_6581:
+        case SID_MODEL_8580:
+        case SID_MODEL_8580D:
+            break;
+        default:
+            return -1;
+    }
+
+    sid_chip_model[chipno] = val;
+    sid_state_changed = 1;
+    return 0;
+}
+
+/** \brief  Get the model of a SID
+ *
+ * \param[in]  chipno  number of the SID, 0 for the first
+ *
+ * \return  the model of that SID: its SidNModel resource, or SidModel when
+ *          that is SID_MODEL_SAME_AS_FIRST or chipno is 0
+ */
+int sid_get_chip_model(int chipno)
+{
+    if (chipno <= 0 || chipno >= SOUND_SIDS_MAX
+        || sid_chip_model[chipno] == SID_MODEL_SAME_AS_FIRST) {
+        return sid_model;
+    }
+    return sid_chip_model[chipno];
+}
 
 static int set_sid_model(int val, void *param)
 {
@@ -250,7 +321,7 @@ static int set_sid_model(int val, void *param)
     return 0;
 }
 
-#if defined(HAVE_RESID) || defined(HAVE_RESID_DTV)
+#if defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP)
 static int set_sid_resid_sampling(int val, void *param)
 {
     switch (val) {
@@ -267,7 +338,8 @@ static int set_sid_resid_sampling(int val, void *param)
     sid_state_changed = 1;
     return 0;
 }
-
+#endif
+#if defined(HAVE_RESID) || defined(HAVE_RESID_DTV)
 static int set_sid_resid_passband(int i, void *param)
 {
     if (i < RESID_6581_PASSBAND_MIN) {
@@ -348,6 +420,71 @@ static int set_sid_resid_8580_filter_bias(int i, void *param)
 
 #endif
 
+#if defined(HAVE_RESIDFP)
+
+static int set_sid_residfp_8580_filter_curve(int i, void *param)
+{
+    if (i < RESIDFP_8580_FILTER_CURVE_MIN) {
+        i = RESIDFP_8580_FILTER_CURVE_MIN;
+    } else if (i > RESIDFP_8580_FILTER_CURVE_MAX) {
+        i = RESIDFP_8580_FILTER_CURVE_MAX;
+    }
+
+    sid_residfp_8580_filter_curve = i;
+    sid_state_changed = 1;
+    return 0;
+}
+
+static int set_sid_residfp_6581_filter_curve(int i, void *param)
+{
+    if (i < RESIDFP_6581_FILTER_CURVE_MIN) {
+        i = RESIDFP_6581_FILTER_CURVE_MIN;
+    } else if (i > RESIDFP_6581_FILTER_CURVE_MAX) {
+        i = RESIDFP_6581_FILTER_CURVE_MAX;
+    }
+
+    sid_residfp_6581_filter_curve = i;
+    sid_state_changed = 1;
+    return 0;
+}
+
+static int set_sid_residfp_6581_filter_range(int i, void *param)
+{
+    if (i < RESIDFP_6581_FILTER_RANGE_MIN) {
+        i = RESIDFP_6581_FILTER_RANGE_MIN;
+    } else if (i > RESIDFP_6581_FILTER_RANGE_MAX) {
+        i = RESIDFP_6581_FILTER_RANGE_MAX;
+    }
+
+    sid_residfp_6581_filter_range = i;
+    sid_state_changed = 1;
+    return 0;
+}
+
+static int set_sid_residfp_combined_waveform_strength(int i, void *param)
+{
+    if (i < RESIDFP_COMBINED_WAVEFORM_STRENGTH_MIN) {
+        i = RESIDFP_COMBINED_WAVEFORM_STRENGTH_MIN;
+    } else if (i > RESIDFP_COMBINED_WAVEFORM_STRENGTH_MAX) {
+        i = RESIDFP_COMBINED_WAVEFORM_STRENGTH_MAX;
+    }
+
+    sid_residfp_combined_waveform_strength = i;
+    sid_state_changed = 1;
+    return 0;
+}
+
+static int set_sid_residfp_6581_old_caps(int val, void *param)
+{
+    sid_residfp_6581_old_caps = val ? 1 : 0;
+
+    sid_state_changed = 1;
+
+    return 0;
+}
+
+#endif
+
 #ifdef HAVE_HARDSID
 static int set_sid_hardsid_main(int val, void *param)
 {
@@ -407,7 +544,6 @@ static int sid_enabled = 1;
 void sid_set_enable(int value)
 {
     int val = value ? 1 : 0;
-
     if (val == sid_enabled) {
         return;
     }
@@ -432,12 +568,13 @@ void sid_set_enable(int value)
 }
 #endif
 
-#if defined(HAVE_RESID) || defined(HAVE_RESID_DTV)
+#if defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP)
 static const resource_int_t resid_resources_int[] = {
-    { "SidResidEnableRawOutput", 0, RES_EVENT_NO, NULL,
-      &sid_resid_enable_raw_output, set_sid_resid_enable_raw_output, NULL },
     { "SidResidSampling", SID_RESID_SAMPLING_RESAMPLING, RES_EVENT_NO, NULL,
       &sid_resid_sampling, set_sid_resid_sampling, NULL },
+#if defined(HAVE_RESID) || defined(HAVE_RESID_DTV)
+    { "SidResidEnableRawOutput", 0, RES_EVENT_NO, NULL,
+      &sid_resid_enable_raw_output, set_sid_resid_enable_raw_output, NULL },
     { "SidResidPassband", RESID_6581_PASSBAND_DEFAULT, RES_EVENT_NO, NULL,
       &sid_resid_passband, set_sid_resid_passband, NULL },
     { "SidResidGain", RESID_6581_FILTER_GAIN_DEFAULT, RES_EVENT_NO, NULL,
@@ -450,13 +587,34 @@ static const resource_int_t resid_resources_int[] = {
       &sid_resid_8580_gain, set_sid_resid_8580_gain, NULL },
     { "SidResid8580FilterBias", RESID_8580_FILTER_BIAS_DEFAULT, RES_EVENT_NO, NULL,
       &sid_resid_8580_filter_bias, set_sid_resid_8580_filter_bias, NULL },
+#endif
+    RESOURCE_INT_LIST_END
+};
+#endif
+
+#if defined(HAVE_RESIDFP)
+static const resource_int_t residfp_resources_int[] = {
+    { "SidResid6581OldCaps", 0, RES_EVENT_NO, NULL,
+      &sid_residfp_6581_old_caps, set_sid_residfp_6581_old_caps, NULL },
+    { "SidResid6581FilterCurve", RESIDFP_6581_FILTER_CURVE_DEFAULT, RES_EVENT_NO, NULL,
+      &sid_residfp_6581_filter_curve, set_sid_residfp_6581_filter_curve, NULL },
+    { "SidResid6581FilterRange", RESIDFP_6581_FILTER_RANGE_DEFAULT, RES_EVENT_NO, NULL,
+      &sid_residfp_6581_filter_range, set_sid_residfp_6581_filter_range, NULL },
+    { "SidResid8580FilterCurve", RESIDFP_8580_FILTER_CURVE_DEFAULT, RES_EVENT_NO, NULL,
+      &sid_residfp_8580_filter_curve, set_sid_residfp_8580_filter_curve, NULL },
+    { "SidResidCombinedWaveformStrength", RESIDFP_COMBINED_WAVEFORM_STRENGTH_DEFAULT, RES_EVENT_NO, NULL,
+      &sid_residfp_combined_waveform_strength, set_sid_residfp_combined_waveform_strength, NULL },
     RESOURCE_INT_LIST_END
 };
 #endif
 
 static resource_int_t common_resources_int[] = {
     /* CAUTION: position is hardcoded below */
-#ifdef HAVE_RESID
+#if defined (HAVE_RESIDFP)
+    { "SidEngine", SID_ENGINE_DEFAULT,
+      RES_EVENT_STRICT, (resource_value_t)SID_ENGINE_RESIDFP,
+      &sid_engine, set_sid_engine, NULL },
+#elif defined (HAVE_RESID)
     { "SidEngine", SID_ENGINE_DEFAULT,
       RES_EVENT_STRICT, (resource_value_t)SID_ENGINE_RESID,
       &sid_engine, set_sid_engine, NULL },
@@ -465,8 +623,10 @@ static resource_int_t common_resources_int[] = {
       RES_EVENT_STRICT, (resource_value_t)SID_ENGINE_FASTSID,
       &sid_engine, set_sid_engine, NULL },
 #endif
+#if defined(HAVE_FASTSID) || defined(HAVE_RESID) || defined(HAVE_RESIDFP) || defined(HAVE_RESID_DTV)
     { "SidFilters", 1, RES_EVENT_SAME, NULL,
       &sid_filters_enabled, set_sid_filters_enabled, NULL },
+#endif
     /* CAUTION: position is hardcoded below */
     { "SidModel", SID_MODEL_DEFAULT, RES_EVENT_SAME, NULL,
       &sid_model, set_sid_model, NULL },
@@ -505,13 +665,40 @@ static const resource_int_t stereo_resources_int[] = {
     RESOURCE_INT_LIST_END
 };
 
+/* template for Sid2Model and up, registered once for each SID but the first */
+static resource_int_t sid_chip_model_resources_int[] = {
+    { NULL, SID_MODEL_SAME_AS_FIRST, RES_EVENT_SAME, NULL,
+      NULL, set_sid_chip_model, NULL },
+    RESOURCE_INT_LIST_END
+};
+
+static int sid_chip_model_resources_init(void)
+{
+    int chipno;
+    int result;
+
+    for (chipno = 1; chipno < SOUND_SIDS_MAX; chipno++) {
+        sid_chip_model_resources_int[0].name = lib_msprintf("Sid%dModel", chipno + 1);
+        sid_chip_model_resources_int[0].value_ptr = &sid_chip_model[chipno];
+        sid_chip_model_resources_int[0].param = vice_int_to_ptr(chipno);
+        result = resources_register_int(sid_chip_model_resources_int);
+        lib_free(sid_chip_model_resources_int[0].name);
+        if (result < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 int sid_common_resources_init(void)
 {
     /* Setup default factory value for sid engine and model. We do this
        here so the default value will not end up in the config file. */
 
     /* setup the default for sid engine */
-#ifdef HAVE_RESID
+#ifdef HAVE_RESIDFP
+    common_resources_int[0].factory_value = SID_ENGINE_RESIDFP;
+#elif defined(HAVE_RESID)
     common_resources_int[0].factory_value = SID_ENGINE_RESID;
 #else
     common_resources_int[0].factory_value = SID_ENGINE_FASTSID;
@@ -549,13 +736,21 @@ int sid_common_resources_init(void)
 
 int sid_resources_init(void)
 {
-#if defined(HAVE_RESID) || defined(HAVE_RESID_DTV)
+#if defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP)
     if (resources_register_int(resid_resources_int) < 0) {
+        return -1;
+    }
+#endif
+#if defined(HAVE_RESIDFP)
+    if (resources_register_int(residfp_resources_int) < 0) {
         return -1;
     }
 #endif
 
     if (resources_register_int(stereo_resources_int) < 0) {
+        return -1;
+    }
+    if (sid_chip_model_resources_init() < 0) {
         return -1;
     }
 
@@ -576,7 +771,7 @@ static sid_engine_model_t sid_engine_models_resid_dtv[] = {
 #endif
 
 #ifdef HAVE_FASTSID
-#ifdef HAVE_RESID
+#if defined(HAVE_RESID) || defined(HAVE_RESIDFP)
 static sid_engine_model_t sid_engine_models_fastsid[] = {
     { "6581 (Fast SID)", SID_FASTSID_6581 },
     { "8580 (Fast SID)", SID_FASTSID_8580 },
@@ -592,7 +787,7 @@ static sid_engine_model_t sid_engine_models_fastsid[] = {
 #endif
 
 #ifdef HAVE_RESID
-#ifdef HAVE_FASTSID
+#if defined(HAVE_FASTSID) || defined(HAVE_RESIDFP)
 static sid_engine_model_t sid_engine_models_resid[] = {
     { "6581 (ReSID)", SID_RESID_6581 },
     { "8580 (ReSID)", SID_RESID_8580 },
@@ -604,6 +799,24 @@ static sid_engine_model_t sid_engine_models_resid[] = {
     { "6581", SID_RESID_6581 },
     { "8580", SID_RESID_8580 },
     { "8580 + digi boost", SID_RESID_8580D },
+    { NULL, -1 }
+};
+#endif
+#endif
+
+#ifdef HAVE_RESIDFP
+#if defined(HAVE_FASTSID) || defined(HAVE_RESID)
+static sid_engine_model_t sid_engine_models_residfp[] = {
+    { "6581 (ReSIDfp)", SID_RESIDFP_6581 },
+    { "8580 (ReSIDfp)", SID_RESIDFP_8580 },
+    { "8580 + digi boost (ReSIDfp)", SID_RESIDFP_8580D },
+    { NULL, -1 }
+};
+#else
+static sid_engine_model_t sid_engine_models_residfp[] = {
+    { "6581", SID_RESIDFP_6581 },
+    { "8580", SID_RESIDFP_8580 },
+    { "8580 + digi boost", SID_RESIDFP_8580D },
     { NULL, -1 }
 };
 #endif
@@ -667,6 +880,10 @@ sid_engine_model_t **sid_get_engine_model_list(void)
     add_sid_engine_models(sid_engine_models_resid);
 #endif
 
+#ifdef HAVE_RESIDFP
+    add_sid_engine_models(sid_engine_models_residfp);
+#endif
+
 #ifdef HAVE_CATWEASELMKIII
     if (catweaselmkiii_available()) {
         add_sid_engine_models(sid_engine_models_catweaselmkiii);
@@ -701,6 +918,7 @@ sid_engine_model_t **sid_get_engine_model_list(void)
 
 static int sid_check_engine_model(int engine, int model)
 {
+    DBG(("sid_check_engine_model SidEngine:%d SidModel:%d\n", engine, model));
     switch (engine) {
         case SID_ENGINE_CATWEASELMKIII:
         case SID_ENGINE_HARDSID:
@@ -721,7 +939,14 @@ static int sid_check_engine_model(int engine, int model)
         case SID_RESID_8580:
         case SID_RESID_8580D:
 #endif
+#ifdef HAVE_RESIDFP
+        case SID_RESIDFP_6581:
+        case SID_RESIDFP_8580:
+        case SID_RESIDFP_8580D:
+#endif
+#if defined(HAVE_FASTSID) || defined(HAVE_RESID) || defined(HAVE_RESIDFP)
             return 0;
+#endif
 #ifdef HAVE_RESID_DTV
         case SID_RESID_DTVSID:
             if (machine_class == VICE_MACHINE_C64DTV) {
@@ -737,6 +962,7 @@ static int sid_check_engine_model(int engine, int model)
 
 int sid_set_engine_model(int engine, int model)
 {
+    DBG(("sid_set_engine_model SidEngine:%d SidModel:%d\n", engine, model));
     if (sid_check_engine_model(engine, model) < 0) {
         return -1;
     }

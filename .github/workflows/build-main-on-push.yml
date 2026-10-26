@@ -15,7 +15,7 @@ jobs:
     name: Cleanup Previous Builds
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@v8
         with:
           github-token: ${{secrets.GITHUB_TOKEN}}
           retries: 3
@@ -91,7 +91,7 @@ jobs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
       release_id: ${{ steps.create_release.outputs.release_id }}
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@v8
         id: create_release
         env:
           TAG_NAME: ${{ github.ref }}
@@ -122,7 +122,7 @@ jobs:
         run: git config --global core.autocrlf input
 
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Dependencies
         shell: bash
@@ -159,14 +159,14 @@ jobs:
           make -j $(sysctl -n hw.ncpu) -s
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: vice-pdf
           path: vice/doc/vice.pdf
           retention-days: 1
 
       - name: Upload Release Asset
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           UPLOAD_URL: ${{ needs.create_release.outputs.upload_url }}
           ASSET_PATH: vice/doc/vice.pdf
@@ -196,18 +196,17 @@ jobs:
       fail-fast: false
       matrix:
         arch:
-        - { msystem: MINGW64, arch: x86_64, prefix: mingw64 }
-          #- { msystem: MINGW32, arch: i686,   prefix: mingw32 }
+        - { msystem: UCRT64, arch: ucrt-x86_64, prefix: ucrt64 }
         ui: [ GTK3, SDL2, SDL1 ]
     steps:
       - run: git config --global core.autocrlf input
         shell: bash
 
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download Documentation
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: vice-pdf
           path: vice/doc/
@@ -241,6 +240,7 @@ jobs:
             mingw-w64-${{ matrix.arch.arch }}-portaudio
             mingw-w64-${{ matrix.arch.arch }}-toolchain
             mingw-w64-${{ matrix.arch.arch }}-xa65
+            mingw-w64-${{ matrix.arch.arch }}-iconv
             p7zip
             subversion
             unzip
@@ -277,6 +277,7 @@ jobs:
             mingw-w64-${{ matrix.arch.arch }}-portaudio
             mingw-w64-${{ matrix.arch.arch }}-toolchain
             mingw-w64-${{ matrix.arch.arch }}-xa65
+            mingw-w64-${{ matrix.arch.arch }}-iconv
             p7zip
             subversion
             unzip
@@ -289,6 +290,7 @@ jobs:
         with:
           msystem: ${{ matrix.arch.msystem }}
           update: true
+          # CAUTION: use same packages in make-release.yml
           install: >-
             autotools
             base-devel
@@ -312,6 +314,7 @@ jobs:
             mingw-w64-${{ matrix.arch.arch }}-portaudio
             mingw-w64-${{ matrix.arch.arch }}-toolchain
             mingw-w64-${{ matrix.arch.arch }}-xa65
+            mingw-w64-${{ matrix.arch.arch }}-iconv
             p7zip
             subversion
             unzip
@@ -346,7 +349,7 @@ jobs:
 
       - name: Upload Zip
         id: upload-zip
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           UPLOAD_URL: ${{ needs.create_release.outputs.upload_url }}
           ASSET_PATH: ${{ steps.build.outputs.zip_path }}
@@ -370,7 +373,7 @@ jobs:
 
       - name: Upload 7Zip
         id: upload-7zip
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           UPLOAD_URL: ${{ needs.create_release.outputs.upload_url }}
           ASSET_PATH: ${{ steps.build.outputs.seven_zip_path }}
@@ -395,7 +398,7 @@ jobs:
   build_deb:
     name: Build Debian Package
     needs: [create_release, build_doc]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -417,10 +420,10 @@ jobs:
         run: git config --global core.autocrlf input
 
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download Documentation
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: vice-pdf
           path: vice/doc/
@@ -441,6 +444,7 @@ jobs:
                               libasound-dev \
                               libcap-dev \
                               libcurl4-openssl-dev \
+                              libflac12t64 \
                               libflac-dev \
                               libgif-dev \
                               libieee1284-3-dev \
@@ -458,6 +462,7 @@ jobs:
                               texlive-latex-extra \
                               xa65
           sudo apt install -y ${{ matrix.ui.deps }}
+          sudo apt upgrade -y
 
       - name: Build
         shell: bash
@@ -501,7 +506,7 @@ jobs:
 
       - name: Upload Deb
         id: upload_deb
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           UPLOAD_URL: ${{ needs.create_release.outputs.upload_url }}
           ASSET_PATH: ${{ steps.make_deb.outputs.deb_path }}
@@ -526,17 +531,14 @@ jobs:
   build_mac:
     name: Build macOS Binaries
     env:
-      SHARED_DEPS: "autoconf automake pkg-config xa lame dos2unix giflib libpng giflib libvorbis flac"
+      SHARED_DEPS: "autoconf automake pkg-config xa lame dos2unix giflib libpng giflib libvorbis flac libusb"
     needs: [create_release, build_doc]
     strategy:
       fail-fast: false
       matrix:
-        silicon:  [ { name: 'Intel Silicon',
-                      runner: 'macos-15-intel',
-                      conf: '--enable-macos-minimum-version=15.0' },
-                    { name: 'Apple Silicon',
-                      runner: 'macos-14',
-                      conf: '--enable-macos-minimum-version=14.0' },
+        silicon:  [ { name: 'Apple Silicon',
+                      runner: 'macos-15',
+                      conf: '--enable-macos-minimum-version=15.0' }
                   ]
         ui: [ { name: 'GTK3',
                 conf: '--enable-gtk3ui',
@@ -548,10 +550,10 @@ jobs:
     runs-on: ${{ matrix.silicon.runner }}
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download Documentation
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: vice-pdf
           path: vice/doc/
@@ -561,6 +563,8 @@ jobs:
         run: |
           brew list -1 | xargs brew uninstall --force
           brew update
+          # Weird Homebrew intel issue on macOS 15, so try to install dos2unix from source if the normal install fails
+          brew install dos2unix || ( echo "Attempting to build dos2unix from source" && brew install dos2unix --build-from-source )
           brew install ${{ env.SHARED_DEPS }} ${{ matrix.ui.deps }}
           echo "brew_prefix=$(brew --prefix)" >> $GITHUB_OUTPUT
       
@@ -598,7 +602,7 @@ jobs:
           echo "dmg_path=${DMG_PATH}" >> $GITHUB_OUTPUT
 
       - name: Upload dmg
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           UPLOAD_URL: ${{ needs.create_release.outputs.upload_url }}
           ASSET_PATH: ${{ steps.build.outputs.dmg_path }}
@@ -625,7 +629,7 @@ jobs:
     needs: [create_release, build, build_deb, build_mac]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@v8
         with:
           github-token: ${{secrets.GITHUB_TOKEN}}
           retries: 3
@@ -648,7 +652,7 @@ jobs:
         run: git config --global core.autocrlf input
 
       - name: Checkout Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Notify IRC of Build Failure
         env:

@@ -820,6 +820,26 @@ int cartridge_flush_secondary_image(int type)
     return -1;
 }
 
+int cartridge_flush_tertiary_image(int type)
+{
+    return -1;
+}
+
+int cartridge_save_tertiary_image(int type, const char *filename)
+{
+    return -1;
+}
+
+int cartridge_can_flush_tertiary_image(int crtid)
+{
+    return 0;
+}
+
+int cartridge_can_save_tertiary_image(int crtid)
+{
+    return 0;
+}
+
 int cartridge_can_save_image(int crtid)
 {
     return 0;
@@ -838,6 +858,14 @@ int cartridge_can_save_secondary_image(int crtid)
 int cartridge_can_flush_secondary_image(int crtid)
 {
     return 0;
+}
+
+/* FIXME: return filetype of cart with given crtid
+   (CARTRIDGE_FILETYPE_BIN, CARTRIDGE_FILETYPE_CRT, CARTRIDGE_FILETYPE_CRT, CARTRIDGE_FILETYPE_NONE) */
+int cartridge_get_filetype(int crtid)
+{
+    log_error(LOG_DEFAULT, "cartridge_get_filetype not implemented.");
+    return CARTRIDGE_FILETYPE_NONE;
 }
 
 int cartridge_enable(int crtid)
@@ -884,12 +912,19 @@ char *cartridge_get_secondary_filename_by_slot(int slot)
 
 /* ------------------------------------------------------------------------- */
 
-/*
-    Snapshot reading and writing
-*/
-
 /* FIXME: due to the snapshots being generally broken as a whole, none of this
           could be tested */
+
+/* CBM2CART 0.1 snapshot module format:
+
+   type  | name                 | description
+   --------------------------------
+   BYTE  | number_of_carts      | number of attached carts
+   BYTE  | mem_cartridge_type   | main type
+   ARRAY | cart_ids             | number_of_carts * DWORD cartridge IDs
+
+   followed by individual cartridges modules
+ */
 
 #define CBM2CART_DUMP_MAX_CARTS  1
 
@@ -1071,4 +1106,3 @@ fail2:
     mem_cartridge_type = CARTRIDGE_NONE; /* Failed to load cartridge! */
     return -1;
 }
-

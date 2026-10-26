@@ -39,6 +39,7 @@
 #include "driveimage.h"
 #include "drive.h"
 #include "fsdevice.h"
+#include "fsimage.h"
 #include "fliplist.h"
 #include "lib.h"
 #include "log.h"
@@ -566,6 +567,31 @@ static void detach_disk_image_and_free(disk_image_t *image, vdrive_t *vdrive,
     }
 }
 
+int probe_disk_image(const char *filename)
+{
+    disk_image_t new_image;
+
+    new_image.gcr = NULL;
+    new_image.p64 = lib_calloc(1, sizeof(TP64Image));
+    new_image.read_only = 1;
+
+    new_image.device = DISK_IMAGE_DEVICE_FS;
+
+    disk_image_media_create(&new_image);
+    disk_image_fsimage_name_set(&new_image, filename);
+
+    if (fsimage_open_probe(&new_image) < 0) {
+        P64ImageDestroy((PP64Image) new_image.p64);
+        lib_free(new_image.p64);
+        disk_image_media_destroy(&new_image);
+        return 0;
+    }
+    P64ImageDestroy((PP64Image) new_image.p64);
+    lib_free(new_image.p64);
+    disk_image_media_destroy(&new_image);
+    return 1;
+}
+
 static int attach_disk_image(disk_image_t *oldimage, vdrive_t *vdrive,
                              const char *filename, unsigned int unit,
                              unsigned int drive, int devicetype)
@@ -673,6 +699,7 @@ static int file_system_attach_disk_internal(unsigned int unit, unsigned int driv
                           file_system_device_enabled[unit - 8]) < 0) {
         return -1;
     } else {
+        log_message(attach_log, "Disk image unit %u:%u %s", unit, drive, filename);
         file_system_set_serial_hooks(unit, ATTACH_DEVICE_NONE);
         fliplist_set_current(unit, filename);
         ui_display_drive_current_image(unit - 8, drive, filename);

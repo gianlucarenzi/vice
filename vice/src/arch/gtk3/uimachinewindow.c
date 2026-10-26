@@ -407,10 +407,7 @@ static gboolean event_box_mouse_button_cb(GtkWidget *widget, GdkEvent *event, gp
         }
         pthread_mutex_unlock(&canvas->lock);
 
-        /* Don't send button events if the mouse isn't captured */
-        if (_mouse_enabled) {
-            mouse_button(button - 1, 1);
-        }
+        mouse_button(button - 1, 1);
     } else if (event->type == GDK_BUTTON_RELEASE) {
         int button = ((GdkEventButton *)event)->button;
 
@@ -424,10 +421,7 @@ static gboolean event_box_mouse_button_cb(GtkWidget *widget, GdkEvent *event, gp
         }
         pthread_mutex_unlock(&canvas->lock);
 
-        /* Don't send button events if the mouse isn't captured */
-        if (_mouse_enabled) {
-            mouse_button(button - 1, 0);
-        }
+        mouse_button(button - 1, 0);
     }
 
     /* Ignore all other mouse button events, though we'll be sent
@@ -458,11 +452,6 @@ static gboolean event_box_scroll_cb(GtkWidget *widget, GdkEvent *event, gpointer
 {
     GdkScrollDirection dir = ((GdkEventScroll *)event)->direction;
     gdouble smooth_x = 0.0, smooth_y = 0.0;
-
-    /* Don't send button events if the mouse isn't captured */
-    if (!_mouse_enabled) {
-        return FALSE;
-    }
 
     switch (dir) {
     case GDK_SCROLL_UP:
@@ -674,7 +663,8 @@ static void machine_window_create(video_canvas_t *canvas)
     machine_window_log = log_open("Window");
 
     /* hack to determine window index for use in UI action handling later */
-    if (strcmp(canvas->videoconfig->chip_name, "VDC") == 0) {
+    if (canvas && canvas->videoconfig && canvas->videoconfig->chip_name &&
+        strcmp(canvas->videoconfig->chip_name, "VDC") == 0) {
         window_id = SECONDARY_WINDOW;
     }
 
@@ -705,7 +695,7 @@ static void machine_window_create(video_canvas_t *canvas)
     g_signal_connect_unlocked(new_event_box, "enter-notify-event", G_CALLBACK(event_box_cross_cb), canvas);
     g_signal_connect_unlocked(new_event_box, "leave-notify-event", G_CALLBACK(event_box_cross_cb), canvas);
 
-    /* Important mouse event handling to bypass the lock and be immediately visible to the emulator */
+    /* Mouse events use their own short locks instead of waiting for mainlock. */
     g_signal_connect_unlocked(new_event_box, "motion-notify-event", G_CALLBACK(event_box_motion_cb), canvas);
     g_signal_connect_unlocked(new_event_box, "button-press-event", G_CALLBACK(event_box_mouse_button_cb), canvas);
     g_signal_connect_unlocked(new_event_box, "button-release-event", G_CALLBACK(event_box_mouse_button_cb), canvas);
@@ -775,8 +765,14 @@ static void machine_window_create(video_canvas_t *canvas)
             * canvas->videoconfig->scalex * (hstretch ? 2 : 1);
     }
 
-    h = (canvas->geometry->last_displayed_line - canvas->geometry->first_displayed_line)
-        * canvas->videoconfig->scaley * (vstretch ? 2 : 1);
+    if (canvas->geometry->first_displayed_line < canvas->geometry->last_displayed_line) {
+        h = (canvas->geometry->last_displayed_line - canvas->geometry->first_displayed_line);
+    } else {
+        /* HACK: avoid negative values */
+        h = 1;
+    }
+    h *= canvas->videoconfig->scaley * (vstretch ? 2 : 1);
+
     if (machine_class != VICE_MACHINE_PLUS4) {
         h = (unsigned)(((double)h) * canvas->geometry->pixel_aspect_ratio);
     }

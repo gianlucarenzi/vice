@@ -39,6 +39,7 @@
 #include "resources.h"
 #include "types.h"
 #include "ui.h"
+#include "uiapi.h"
 #include "uiactions.h"
 #include "uihotkeys.h"
 #include "uisettings.h"
@@ -234,20 +235,25 @@ static void on_settings_save_to_filename(GtkDialog *dialog,
                                          gpointer   unused)
 {
     if (filename!= NULL) {
-        mainlock_obtain();
+/* On Windows the main thread stops responding when we use the dialog as
+   parent here, see bug #2205 */
+#ifdef WINDOWS_COMPILE
+        if (resources_save(filename) != 0) {
+            ui_error("Failed to save settings as '%s'",
+                    filename);
+        }
+#else
         if (resources_save(filename) != 0) {
             vice_gtk3_message_error(GTK_WINDOW(dialog),
                                     "VICE core error",
                                     "Failed to save settings as '%s'",
                                     filename);
         }
-        mainlock_release();
+#endif
         lastdir_update(GTK_WIDGET(dialog), &last_dir, &last_file);
         g_free(filename);
     }
-    mainlock_release();
     gtk_widget_destroy(GTK_WIDGET(dialog));
-    mainlock_obtain();
     ui_action_finish(ACTION_SETTINGS_SAVE_TO);
 }
 
@@ -283,7 +289,8 @@ static void settings_save_to_action(ui_action_map_t *self)
 static const ui_action_map_t settings_actions[] = {
     {
         .action  = ACTION_SETTINGS_DEFAULT,
-        .handler = settings_default_action
+        .handler = settings_default_action,
+        .dialog  = true
     },
     {
         .action  = ACTION_SETTINGS_DIALOG,
@@ -294,7 +301,8 @@ static const ui_action_map_t settings_actions[] = {
     {
         .action  = ACTION_SETTINGS_LOAD,
         .handler = settings_load_action,
-        .blocks  = true
+        .blocks  = true,
+        .uithread = true
     },
     {
         .action  = ACTION_SETTINGS_LOAD_FROM,
@@ -313,7 +321,8 @@ static const ui_action_map_t settings_actions[] = {
     {
         .action  = ACTION_SETTINGS_SAVE,
         .handler = settings_save_action,
-        .blocks  = true
+        .blocks  = true,
+        .uithread = true
     },
     {
         .action  = ACTION_SETTINGS_SAVE_TO,

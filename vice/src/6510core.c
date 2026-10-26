@@ -516,7 +516,7 @@ do {                                                                   \
                 }                                                                              \
                 if (monitor_mask[CALLER] & (MI_WATCH)) {                                       \
                     EXPORT_REGISTERS();                                                        \
-                    monitor_check_watchpoints(LAST_OPCODE_ADDR, (uint16_t)reg_pc);             \
+                    monitor_check_watchpoints(ORIGIN_MEMSPACE, LAST_OPCODE_ADDR, (uint16_t)reg_pc);             \
                     IMPORT_REGISTERS();                                                        \
                 }                                                                              \
             }                                                                                  \
@@ -1275,7 +1275,7 @@ FIXME: perhaps we really have to add some randomness to (some) bits
     } while (0)
 
 /* HACK: fix JSR MSB in monitor CPU history */
-#if defined(FEATURE_CPUMEMHISTORY) && !defined(DRIVE_CPU)
+#if defined(FEATURE_CPUMEMHISTORY)
 #define JSR_FIXUP_MSB(x)    monitor_cpuhistory_fix_p2(x)
 #else
 #define JSR_FIXUP_MSB(x)
@@ -1677,6 +1677,7 @@ FIXME: perhaps we really have to add some randomness to (some) bits
         LOAD_DUMMY(0x100 + reg_sp);  \
         tmp = PULL();                \
         tmp = tmp | (PULL() << 8);   \
+        LOAD_DUMMY(tmp);             \
         JUMP(tmp);                   \
         FETCH_PARAM(reg_pc);         \
         CLK_ADD(CLK, CLK_INT_CYCLE); \

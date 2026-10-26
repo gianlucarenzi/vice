@@ -97,13 +97,11 @@ static GSList *tune_submenu_group = NULL;
 static const ui_menu_item_t reset_submenu[] = {
     {   .label    = "Reset machine CPU",
         .type     = UI_MENU_TYPE_ITEM_ACTION,
-        .action   = ACTION_MACHINE_RESET_CPU,
-        .unlocked = true
+        .action   = ACTION_MACHINE_RESET_CPU
     },
     {   .label    = "Power cycle machine",
         .type     = UI_MENU_TYPE_ITEM_ACTION,
-        .action   = ACTION_MACHINE_POWER_CYCLE,
-        .unlocked = true
+        .action   = ACTION_MACHINE_POWER_CYCLE
     },
     UI_MENU_TERMINATOR
 };
@@ -287,7 +285,8 @@ static void select_tune_from_menu(GtkMenuItem *menuitem,
         return;
     }
     tune = GPOINTER_TO_INT(user_data);
-    psid_init_driver();
+    /*psid_init_driver();*/ /* reset triggers this */
+    printf("select_tune_from_menu\n");
     machine_play_psid(tune);
     machine_trigger_reset(MACHINE_RESET_MODE_RESET_CPU);
 }
@@ -341,6 +340,7 @@ void ui_vsid_tune_menu_set_tune_count(int count)
  */
 void ui_vsid_tune_set_tune_current(int count)
 {
+    printf("ui_vsid_tune_set_tune_current %d\n", count);
     if (tune_submenu_group != NULL) {
         gpointer nth_item = g_slist_nth_data(tune_submenu_group, (guint)count - 1);
         if (nth_item != NULL) {

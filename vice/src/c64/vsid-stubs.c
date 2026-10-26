@@ -56,6 +56,7 @@
 #include "fileio.h"
 #include "fsdevice.h"
 #include "fsdevice-filename.h"
+#include "fsimage.h"
 #include "gfxoutput.h"
 #include "iecbus.h"
 #include "iecdrive.h"
@@ -70,6 +71,7 @@
 #include "sampler.h"
 #include "snapshot.h"
 #include "tap.h"
+#include "t64.h"
 #include "tape.h"
 #include "tapecart.h"
 #include "tapeport.h"
@@ -247,6 +249,26 @@ int cartridge_flush_secondary_image(int type)
     return -1;
 }
 
+int cartridge_flush_tertiary_image(int type)
+{
+    return -1;
+}
+
+int cartridge_save_tertiary_image(int type, const char *filename)
+{
+    return -1;
+}
+
+int cartridge_can_flush_tertiary_image(int crtid)
+{
+    return 0;
+}
+
+int cartridge_can_save_tertiary_image(int crtid)
+{
+    return 0;
+}
+
 int cartridge_can_save_image(int crtid)
 {
     return 0;
@@ -265,6 +287,11 @@ int cartridge_can_save_secondary_image(int crtid)
 int cartridge_can_flush_secondary_image(int crtid)
 {
     return 0;
+}
+
+int cartridge_get_filetype(int type)
+{
+    return CARTRIDGE_FILETYPE_NONE;
 }
 
 int cartridge_enable(int crtid)
@@ -523,6 +550,11 @@ int tape_image_detach(unsigned int unit)
     return 0;
 }
 
+int tape_image_probe(const char *name)
+{
+    return 0;
+}
+
 void tape_image_detach_all(void)
 {
 }
@@ -597,6 +629,16 @@ const char *tape_get_file_name(int port)
 }
 
 int tapeport_valid_port(int port)
+{
+    return 0;
+}
+
+int t64_probe(const char *filename)
+{
+    return 0;
+}
+
+int tap_probe(const char *filename)
 {
     return 0;
 }
@@ -798,6 +840,11 @@ int disk_image_fsimage_create_dhd(const char *name, const char *dname, unsigned 
     return 0;
 }
 
+int fsimage_open_probe(disk_image_t *image)
+{
+    return 0;
+}
+
 int disk_image_write_sector(disk_image_t *image, const uint8_t *buf, const disk_addr_t *dadr)
 {
     return 0;
@@ -966,6 +1013,14 @@ void drive_cpu_execute_all(CLOCK clk_value)
 {
 }
 
+void drive_catch_up_hook(CLOCK clk_value)
+{
+}
+
+void drive_cycle_hook(void)
+{
+}
+
 int drive_num_leds(unsigned int dnr)
 {
     return 1;
@@ -1047,8 +1102,13 @@ int vdrive_attach_image(disk_image_t *image, unsigned int unit, unsigned int dri
     return 0;
 }
 
-void vdrive_get_last_read(unsigned int *track, unsigned int *sector, uint8_t **buffer)
+void vdrive_get_last_read(vdrive_t *vdrive, unsigned int *track, unsigned int *sector, uint8_t **buffer, int num)
 {
+}
+
+int vdrive_get_last_read_ptr(void)
+{
+    return 0;
 }
 
 int vdrive_internal_create_format_disk_image(const char *filename, const char *diskname, unsigned int type)
@@ -1198,6 +1258,11 @@ const char *tapeport_get_device_type_desc(int type)
     return NULL;
 }
 #endif
+
+uint8_t userport_io_sim_get_pbx_out_lines(void)
+{
+    return 0;
+}
 
 void userport_io_sim_set_pbx_out_lines(uint8_t val)
 {

@@ -65,9 +65,9 @@
 #define MMCREPLAY_FLASHROM_SIZE (1024 * 512)
 #define MMCREPLAY_RAM_SIZE (1024 * 512)
 
-/* #define MMCRDEBUG */
+/* #define DEBUG_MMCR */
 
-#ifdef MMCRDEBUG
+#ifdef DEBUG_MMCR
 #define DEBUG_LOGBANKS    /* log access to banked rom/ram */
 #define DEBUG_IOBANKS     /* log access to banked rom/ram in io */
 #define LOG_MAPPER        /* log memory map changes */
@@ -110,7 +110,7 @@
 /* #define TEST_RESCUE_MODE */
 #endif
 
-#ifdef MMCRDEBUG
+#ifdef DEBUG_MMCR
 #define LOG(_x_) log_printf  _x_
 #else
 #define LOG(_x_)
@@ -599,7 +599,7 @@ static void mmcreplay_io2bank_set(unsigned int bank, unsigned int rambank)
     io2_ram_bank = (int)rambank;
 }
 
-#ifdef MMCRDEBUG
+#ifdef DEBUG_MMCR
 static int last_mainmode = 0;
 static int last_biosmode = 0;
 static int last_biosmode444 = 0;
@@ -634,7 +634,7 @@ static void mmcreplay_update_mapper_nolog(unsigned int wflag, int release_freeze
             mapped_game = 0;
             LOG(("main mode: rescue"));
         } else {
-#ifdef MMCRDEBUG
+#ifdef DEBUG_MMCR
             if (last_mainmode != 111) {
                 LOG(("main mode: mmc bios"));
                 last_mainmode = 111;
@@ -675,7 +675,7 @@ static void mmcreplay_update_mapper_nolog(unsigned int wflag, int release_freeze
                 mapped_exrom = 1;
 
                 if (enable_ram_io1) {
-#ifdef MMCRDEBUG
+#ifdef DEBUG_MMCR
                     if (last_biosmode != 111) {
                         LOG(("bios mode: 111"));
                         last_biosmode = 111;
@@ -724,7 +724,7 @@ static void mmcreplay_update_mapper_nolog(unsigned int wflag, int release_freeze
                         enable_io2 = 0;
                     }
                 } else {
-#ifdef MMCRDEBUG
+#ifdef DEBUG_MMCR
                     if (last_biosmode != 222) {
                         LOG(("bios mode: 222"));
                         last_biosmode = 222;
@@ -787,7 +787,7 @@ static void mmcreplay_update_mapper_nolog(unsigned int wflag, int release_freeze
                 ultimax_mapping_hack = 1;
 
                 if (enable_ram_io1) {
-#ifdef MMCRDEBUG
+#ifdef DEBUG_MMCR
                     if (last_biosmode != 333) {
                         LOG(("bios mode: 333"));
                         last_biosmode = 333;
@@ -841,7 +841,7 @@ static void mmcreplay_update_mapper_nolog(unsigned int wflag, int release_freeze
                         mapped_exrom = 1;       /* 16k game */
                     }
                 } else {
-#ifdef MMCRDEBUG
+#ifdef DEBUG_MMCR
                     if (last_biosmode != 444) {
                         LOG(("bios mode: 444"));
                         last_biosmode = 444;
@@ -883,7 +883,7 @@ static void mmcreplay_update_mapper_nolog(unsigned int wflag, int release_freeze
                      * high bank=7 if not extended mode
                      */
                     if (enable_ram_io) { /* ultimax */
-#ifdef MMCRDEBUG
+#ifdef DEBUG_MMCR
                         if (last_biosmode444 != 111) {
                             LOG(("bios mode 444: ram enabled"));
                             last_biosmode444 = 111;
@@ -945,7 +945,7 @@ static void mmcreplay_update_mapper_nolog(unsigned int wflag, int release_freeze
                         ramA000_bank = cartbankl;
                         rambankh = rambankl;
                     } else {       /* 16k game */
-#ifdef MMCRDEBUG
+#ifdef DEBUG_MMCR
                         if (last_biosmode444 != 222) {
                             LOG(("bios mode 444: ram disabled"));
                             last_biosmode444 = 222;
@@ -989,7 +989,7 @@ static void mmcreplay_update_mapper_nolog(unsigned int wflag, int release_freeze
             }
         }
     } else if (enable_16k_mapping) {
-#ifdef MMCRDEBUG
+#ifdef DEBUG_MMCR
         if (last_mainmode != 222) {
             LOG(("main mode: super mapper"));
             last_mainmode = 222;
@@ -1082,7 +1082,7 @@ static void mmcreplay_update_mapper_nolog(unsigned int wflag, int release_freeze
         /**************************************************************************************************
          * normal mapper
          **************************************************************************************************/
-#ifdef MMCRDEBUG
+#ifdef DEBUG_MMCR
         if (last_mainmode != 333) {
             LOG(("main mode: normal mapper"));
             last_mainmode = 333;
@@ -1113,7 +1113,7 @@ static void mmcreplay_update_mapper_nolog(unsigned int wflag, int release_freeze
         /**************************************************************************************************
          * retro replay mapper
          **************************************************************************************************/
-#ifdef MMCRDEBUG
+#ifdef DEBUG_MMCR
         if (last_mainmode != 444) {
             LOG(("MMCREPLAY: *** main mode: [rr mapper]"));
             last_mainmode = 444;
@@ -2633,6 +2633,7 @@ void mmcreplay_config_setup(uint8_t *rawcart)
 
 static int set_mmcr_clockport_device(int val, void *param)
 {
+    LOG(("set_mmcr_clockport_device: %d", val));
     if (val == clockport_device_id) {
         return 0;
     }
@@ -2660,6 +2661,7 @@ static int set_mmcr_clockport_device(int val, void *param)
 
 static int clockport_activate(void)
 {
+    LOG(("clockport_activate"));
     if (mmcr_enabled) {
         return 0;
     }
@@ -2677,6 +2679,7 @@ static int clockport_activate(void)
 
 static int clockport_deactivate(void)
 {
+    LOG(("clockport_deactivate"));
     if (!mmcr_enabled) {
         return 0;
     }
@@ -2721,6 +2724,7 @@ int mmcreplay_bin_attach(const char *filename, uint8_t *rawcart)
     mmcr_filetype = 0;
     mmcr_filename = NULL;
 
+    LOG(("mmcreplay_bin_attach filename:%s", filename));
     if (util_file_load(filename, rawcart, MMCREPLAY_FLASHROM_SIZE,
                        UTIL_FILE_LOAD_SKIP_ADDRESS) < 0) {
         /* also try loading one 64k bank */
@@ -2745,6 +2749,7 @@ int mmcreplay_crt_attach(FILE *fd, uint8_t *rawcart, const char *filename)
     mmcr_filetype = 0;
     mmcr_filename = NULL;
 
+    LOG(("mmcreplay_crt_attach filename:%s", filename));
     memset(rawcart, 0xff, 0x80000);
 
     for (i = 0; i <= 63; i++) {
@@ -2791,6 +2796,7 @@ int mmcreplay_bin_save(const char *filename)
     FILE *fd;
     int i, n = 0;
 
+    LOG(("mmcreplay_bin_save filename:%s", filename));
     if (filename == NULL) {
         return -1;
     }
@@ -2829,6 +2835,7 @@ int mmcreplay_crt_save(const char *filename)
     uint8_t *data;
     int i, n = 0;
 
+    LOG(("mmcreplay_crt_save filename:%s", filename));
     fd = crt_create(filename, CARTRIDGE_MMC_REPLAY, 1, 0, STRING_MMC_REPLAY);
 
     if (fd == NULL) {
@@ -2877,6 +2884,7 @@ int mmcreplay_crt_save(const char *filename)
 
 int mmcreplay_flush_image(void)
 {
+    LOG(("mmcreplay_flush_image mmcr_filetype:%d", mmcr_filetype));
     if (mmcr_filetype == CARTRIDGE_FILETYPE_BIN) {
         return mmcreplay_bin_save(mmcr_filename);
     } else if (mmcr_filetype == CARTRIDGE_FILETYPE_CRT) {
@@ -2887,12 +2895,14 @@ int mmcreplay_flush_image(void)
 
 int mmcreplay_save_eeprom(const char *filename)
 {
+    LOG(("mmcreplay_save_eeprom:%s", filename));
     log_error(LOG_DEFAULT, "FIXME: mmcreplay_save_eeprom not implemented");
     return -1;
 }
 
 int mmcreplay_flush_eeprom(void)
 {
+    LOG(("mmcreplay_flush_eeprom"));
     log_error(LOG_DEFAULT, "FIXME: mmcreplay_flush_eeprom not implemented");
     return -1;
 }
@@ -2936,6 +2946,7 @@ int mmcreplay_cart_enabled(void)
 
 static int set_mmcr_card_filename(const char *name, void *param)
 {
+    LOG(("set_mmcr_card_filename:%s", name));
     if (mmcr_card_filename != NULL && name != NULL && strcmp(name, mmcr_card_filename) == 0) {
         return 0;
     }
@@ -2957,6 +2968,7 @@ static int set_mmcr_card_filename(const char *name, void *param)
 
 static int set_mmcr_eeprom_filename(const char *name, void *param)
 {
+    LOG(("set_mmcr_eeprom_filename:%s", name));
     if (mmcr_eeprom_filename != NULL && name != NULL && strcmp(name, mmcr_eeprom_filename) == 0) {
         return 0;
     }
@@ -2978,6 +2990,7 @@ static int set_mmcr_eeprom_filename(const char *name, void *param)
 
 static int set_mmcr_card_rw(int val, void* param)
 {
+    LOG(("set_mmcr_card_rw:%d", val));
     mmcr_card_rw = val ? 1 : 0;
 
     if (mmcr_enabled) {
@@ -2989,18 +3002,21 @@ static int set_mmcr_card_rw(int val, void* param)
 
 static int set_mmcr_eeprom_rw(int val, void* param)
 {
+    LOG(("set_mmcr_eeprom_rw:%d", val));
     mmcr_eeprom_rw = val ? 1 : 0;
     return 0;
 }
 
 static int set_mmcr_rescue_mode(int val, void* param)
 {
+    LOG(("set_mmcr_rescue_mode:%d", val));
     enable_rescue_mode = val ? 1 : 0;
     return 0;
 }
 
 static int set_mmcr_sd_type(int val, void* param)
 {
+    LOG(("set_mmcr_sd_type:%d", val));
     switch (val) {
         case MMCR_TYPE_AUTO:
         case MMCR_TYPE_MMC:
@@ -3017,6 +3033,7 @@ static int set_mmcr_sd_type(int val, void* param)
 
 static int set_mmcr_image_write(int val, void *param)
 {
+    LOG(("set_mmcr_image_write:%d", val));
     mmcr_write_image = val ? 1 : 0;
 
     return 0;

@@ -64,6 +64,7 @@
 #include "mem.h"
 #include "mon_breakpoint.h"
 #include "mon_disassemble.h"
+#include "mon_input.h"
 #include "mon_memmap.h"
 #include "mon_memory.h"
 #include "asm.h"
@@ -389,6 +390,8 @@ void monitor_reset_hook(void)
 
 void monitor_vsync_hook(void)
 {
+    mon_input_vsync_hook();
+
     if (init_break_mode == ON_READY) {
         /*
          * Check if READY has been printed on the screen ..
@@ -1387,6 +1390,15 @@ void mon_cart_freeze(void)
     }
 }
 
+void mon_userport_get_output(void)
+{
+    if (machine_class == VICE_MACHINE_CBM5x0) {
+        mon_out("Unsupported.\n");
+    } else {
+        mon_out("PB: $%02x\n", userport_io_sim_get_pbx_out_lines());
+    }
+}
+
 IO_SIM_RESULT mon_userport_set_output(int value)
 {
     if (machine_class == VICE_MACHINE_CBM5x0) {
@@ -1403,6 +1415,39 @@ IO_SIM_RESULT mon_userport_set_output(int value)
     return 0;
 }
 
+void mon_joyport_get_output(int port)
+{
+    int command_ok = 0;
+    switch (machine_class) {
+        case VICE_MACHINE_C64:
+        case VICE_MACHINE_C128:
+        case VICE_MACHINE_CBM5x0:
+        case VICE_MACHINE_C64DTV:
+        case VICE_MACHINE_C64SC:
+        case VICE_MACHINE_SCPU64:
+            if (port == JOYPORT_1 || port == JOYPORT_2) {
+                command_ok = 1;
+            }
+            break;
+        case VICE_MACHINE_VIC20:
+            if (port == JOYPORT_1) {
+                command_ok = 1;
+            }
+            break;
+        case VICE_MACHINE_PLUS4:
+            if (port == JOYPORT_1 || port == JOYPORT_2 || port == JOYPORT_PLUS4_SIDCART) {
+                command_ok = 1;
+            }
+            break;
+    }
+    if (command_ok) {
+        mon_out("$%02x\n", joyport_io_sim_get_out_lines(port));
+    } else {
+        mon_out("Illegal value.\n");
+    }
+}
+
+/* FIXME: why would this only support the "regular" joystick ports? */
 IO_SIM_RESULT mon_joyport_set_output(int port, int value)
 {
     int command_ok = 0;
@@ -1463,13 +1508,13 @@ void mon_export(void)
     }
 }
 
-void mon_stopwatch_show(const char *prefix, const char *suffix)
+void mon_stopwatch_show(MEMSPACE mem, const char *prefix, const char *suffix)
 {
     unsigned long t;
     monitor_interface_t *vice_interface;
-    vice_interface = mon_interfaces[default_memspace];
+    vice_interface = mon_interfaces[mem];
     t = (unsigned long)
-        (*vice_interface->clk - stopwatch_start_time[default_memspace]);
+        (*vice_interface->clk - stopwatch_start_time[mem]);
     mon_out("%s%10lu%s", prefix, t, suffix);
 }
 
@@ -2662,8 +2707,8 @@ void mon_print_conditional(cond_node_t *cnode)
     }
 }
 
-
-int mon_evaluate_conditional(cond_node_t *cnode)
+/* this function is used exclusively by the break/watchpoints */
+int mon_evaluate_conditional(cond_node_t *cnode, unsigned int effective_pc)
 {
     /* Do a post-order traversal of the tree */
     if (cnode->operation != e_INV) {
@@ -2673,8 +2718,8 @@ int mon_evaluate_conditional(cond_node_t *cnode)
             log_error(LOG_DEFAULT, "No conditional!");
             return 0;
         }
-        value_1 = mon_evaluate_conditional(cnode->child1);
-        value_2 = mon_evaluate_conditional(cnode->child2);
+        value_1 = mon_evaluate_conditional(cnode->child1, effective_pc);
+        value_2 = mon_evaluate_conditional(cnode->child2, effective_pc);
 
         switch (cnode->operation) {
             case e_EQU:
@@ -2739,6 +2784,9 @@ int mon_evaluate_conditional(cond_node_t *cnode)
             int half_cycle;
             mon_interfaces[e_comp_space]->get_line_cycle(&line, &cycle, &half_cycle);
             cnode->value = cycle;
+        } else if (cnode->is_reg && (reg_regid(cnode->reg_num) == e_PC) ) {
+            /* mask out the address only, else we can not compare against the actual value */
+            cnode->value = addr_mask(effective_pc);
         } else if (cnode->is_reg) {
             cnode->value = (monitor_cpu_for_memspace[reg_memspace(cnode->reg_num)]->mon_register_get_val)
                                (reg_memspace(cnode->reg_num),
@@ -2747,7 +2795,7 @@ int mon_evaluate_conditional(cond_node_t *cnode)
             MEMSPACE src_mem = e_comp_space;
             uint16_t start;
             if (cnode->child1 != NULL) {
-                start = mon_evaluate_conditional(cnode->child1);
+                start = mon_evaluate_conditional(cnode->child1, effective_pc);
             } else {
                 start = addr_location(cnode->value);
             }
@@ -2952,6 +3000,22 @@ int monitor_check_breakpoints(MEMSPACE mem, uint16_t addr)
 }
 
 /* called by macro DO_INTERRUPT() in 6510(dtv)core.c */
+void monitor_check_watchpoints(MEMSPACE mem, unsigned int lastpc, unsigned int pc)
+{
+    while (watch_load_count[mem]) {
+        if (watchpoints_check_loads(mem, lastpc, pc)) {
+            monitor_startup(mem);
+        }
+    }
+
+    while (watch_store_count[mem]) {
+        if (watchpoints_check_stores(mem, lastpc, pc)) {
+            monitor_startup(mem);
+        }
+    }
+}
+
+#if 0
 void monitor_check_watchpoints(unsigned int lastpc, unsigned int pc)
 {
     unsigned int dnr;
@@ -2980,6 +3044,7 @@ void monitor_check_watchpoints(unsigned int lastpc, unsigned int pc)
         watch_store_occurred = false;
     }
 }
+#endif
 
 int monitor_diskspace_dnr(int mem)
 {
@@ -3256,6 +3321,8 @@ static void monitor_close(bool check_exit)
     memmap_state &= ~(MEMMAP_STATE_IN_MONITOR);
 #endif
     inside_monitor = false;
+
+    uimon_notify_change();
 
     if (check_exit && exit_mon == exit_mon_quit_vice) {
         if (!monitor_is_remote()) {

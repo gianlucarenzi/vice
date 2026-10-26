@@ -533,15 +533,15 @@ static int sound_machine_channels(void)
 /* FIXME: We need sanity checks!  And do we really need all of these
    `sound_close()' calls?  */
 
-static int playback_enabled;           /* app_resources.sound */
+static int playback_enabled = 0;       /* app_resources.sound */
 static int sample_rate;                /* app_resources.soundSampleRate */
 static char *device_name = NULL;       /* app_resources.soundDeviceName */
 static char *device_arg = NULL;        /* app_resources.soundDeviceArg */
 static char *recorddevice_name = NULL; /* app_resources.soundDeviceName */
 static char *recorddevice_arg = NULL;  /* app_resources.soundDeviceArg */
 static int buffer_size;                /* app_resources.soundBufferSize */
-static int volume;
-static int amp;
+static int volume = 0;
+static int amp = 0;
 static int fragment_size;
 static int output_option;
 static int sound_emulation_enabled_on_warp;
@@ -1048,6 +1048,17 @@ static int sid_open(void)
     return 0;
 }
 
+bool sound_not_sensible_speed_to_play(void)
+{
+    /*
+     * Residfp resampling crashes at low SID speed,
+     * so the decision was made to disable the analog emulation at low
+     * emu speeds, and disable audible playback as well.
+     */
+
+    return speed_percent < 50;
+}
+
 /* initialize SID engine */
 static int sid_init(void)
 {
@@ -1061,10 +1072,16 @@ static int sid_init(void)
     /* "No limit" doesn't make sense for cycle based sound engines,
        which have a fixed sampling rate. */
     speed_factor = speed_percent ? speed_percent : 100;
+
+    /* Keep sample generation at a safe rate while low-speed playback is muted. */
+    if (sound_not_sensible_speed_to_play()) {
+        speed_factor = 100;
+    }
+
     speed = sample_rate * 100 / speed_factor;
 
     /* Sample based sound engines rely on clkstep for timing */
-    snddata.clkstep = SOUNDCLK_CONSTANT(speed_percent / 100 * cycles_per_sec) / sample_rate;
+    snddata.clkstep = SOUNDCLK_CONSTANT(speed_factor / 100 * cycles_per_sec) / sample_rate;
 
     snddata.origclkstep = snddata.clkstep;
     snddata.clkfactor = SOUNDCLK_CONSTANT(1.0);
@@ -1098,6 +1115,8 @@ sound_t *sound_get_psid(unsigned int channel)
     return snddata.psid[channel];
 }
 
+static int overflow_warning_count = 0;
+
 /* open sound device */
 int sound_open(void)
 {
@@ -1112,6 +1131,8 @@ int sound_open(void)
     int fragsize;
     int fragnr;
     double bufsize;
+
+    overflow_warning_count = 0;
 
     if (snddata.playdev) {
         /*
@@ -1366,10 +1387,6 @@ void sound_close(void)
 /* run sid */
 static int sound_run_sound(void)
 {
-#if 1
-    static int overflow_warning_count = 0;
-#endif
-
     int nr = 0;
     int i;
     CLOCK delta_t = 0;
@@ -1529,6 +1546,14 @@ bool sound_flush(void)
         snddata.bufptr = 0;
         goto done;
     }
+
+    /* Discard audio while low-speed playback is suspended. */
+    if (sound_not_sensible_speed_to_play()) {
+        sound_suspend();
+        snddata.bufptr = 0;
+        goto done;
+    }
+
     sound_resume();
 
 #if 0
@@ -1631,6 +1656,11 @@ bool sound_flush(void)
 
 done:
 
+    /* Use the host clock to pace emulation while low-speed playback is muted. */
+    if (sound_not_sensible_speed_to_play()) {
+        return true;
+    }
+
     /*
      * If the sound device is not a timing source, then we need
      * the host to sleep to sync time with the emulator.
@@ -1673,6 +1703,11 @@ void sound_suspend(void)
 void sound_resume(void)
 {
     if (!snddata.playdev) {
+        return;
+    }
+
+    /* Keep playback suspended if emu speed is too slow or too fast. */
+    if (sound_not_sensible_speed_to_play()) {
         return;
     }
 

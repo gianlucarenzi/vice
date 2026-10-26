@@ -110,6 +110,13 @@ void keyboard_set_keyarr_any(int row, int col, int value);
 
 void keyboard_clear_keymatrix(void);
 
+/* keys pressed from the monitor, independent of the host keyboard */
+int keyboard_inject_key(int row, int col, int pressed);
+int keyboard_inject_key_get(int row, int col);
+int keyboard_inject_restore(int pressed);
+int keyboard_inject_restore_get(void);
+void keyboard_inject_clear(void);
+
 void keyboard_event_playback(CLOCK offset, void *data);
 void keyboard_restore_event_playback(CLOCK offset, void *data);
 void keyboard_event_delayed_playback(void *data);
@@ -148,5 +155,8 @@ extern int keyarr[KBD_ROWS];
 extern int rev_keyarr[KBD_COLS];
 
 int keyboard_statusbar_enabled(void);
+
+/* for the GUI to translate keycodes to row/col */
+int keyboard_find_mapped_row_col(int key, int *row, int *col, int *shift);
 
 #endif

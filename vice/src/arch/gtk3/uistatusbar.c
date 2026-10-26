@@ -541,28 +541,31 @@ static void disk_dir_autostart_callback(const char *image,
                                         unsigned int drive);
 
 
-/** \brief  Trigger redraw of a widget on the UI thread
+/** \brief  Trigger redraw of a joyport on the UI thread
  *
- * \param[in,out]   user_data   widget to redraw
+ * \param[in]   user_data   joyport index
  *
  * \return  FALSE
  */
-static gboolean redraw_widget_on_ui_thread_impl(gpointer user_data)
+static gboolean redraw_joyport_on_ui_thread(gpointer user_data)
 {
-    gtk_widget_queue_draw((GtkWidget *)user_data);
+    int i = GPOINTER_TO_INT(user_data);
+    int j;
+
+    for (j = 0; j < MAX_STATUS_BARS; ++j) {
+        if (allocated_bars[j].joysticks) {
+            GtkWidget *grid;
+            GtkWidget *widget;
+
+            grid = gtk_bin_get_child(GTK_BIN(allocated_bars[j].joysticks));
+            widget = gtk_grid_get_child_at(GTK_GRID(grid), i + 1, 0);
+            if (widget) {
+                gtk_widget_queue_draw(widget);
+            }
+        }
+    }
 
     return FALSE;
-}
-
-/** \brief Queue a redraw of widget on the ui thread.
- *
- * It's not safe to ask a widget to redraw from the vice thread.
- *
- * \param[in,out]   widget  widget to redraw
- */
-static void redraw_widget_on_ui_thread(GtkWidget *widget)
-{
-    gdk_threads_add_timeout(0, redraw_widget_on_ui_thread_impl, (gpointer)widget);
 }
 
 /** \brief Get a locked reference to sb_state */
@@ -850,9 +853,11 @@ static gboolean draw_joyport_cb(GtkWidget *widget, cairo_t *cr, gpointer data)
     /* Fire buttons: Bits 4-6. Each of the three notional fire buttons
      * controls the red, green, or blue color of the fire button
      * area. By default, we are using one-button joysticks and so this
-     * region will be either black or red. */
-    cairo_set_source_rgb(cr, (val&0x10) ? 1 : 0,
-                             (val&0x20) ? 1 : 0,
+     * region will be either black or red.
+     * We add to R & G if button 3 is pressed, otherwise the pure blue
+     * is virtually invisible. It's now a perceptable bluish gray. */
+    cairo_set_source_rgb(cr, (val&0x10) ? 1 : (val&0x40) ? 0.5 : 0,
+                             (val&0x20) ? 1 : (val&0x40) ? 0.5 : 0,
                              (val&0x40) ? 1 : 0);
     cairo_rectangle(cr, x + e + 2*s, y + e + 2*s, e, e);
     cairo_fill(cr);
@@ -2848,6 +2853,16 @@ GtkWidget *ui_statusbar_create(int window_identity)
 }
 
 
+/** \brief Update elapsed time on the UI thread. */
+static gboolean ui_display_event_time_impl(gpointer user_data)
+{
+    unsigned int *times = user_data;
+
+    ui_display_event_time(times[0], times[1]);
+    lib_free(times);
+    return FALSE;
+}
+
 /** \brief Statusbar API function to register an elapsed time.
  *
  *  \param current The current time value in seconds
@@ -2858,11 +2873,31 @@ void ui_display_event_time(unsigned int current, unsigned int total)
 {
     GtkWidget *widget;
 
-    /* Ok to call from VICE thread */
+    if (mainlock_is_vice_thread()) {
+        unsigned int *times = lib_malloc(2 * sizeof(*times));
+
+        times[0] = current;
+        times[1] = total;
+        gdk_threads_add_timeout(0, ui_display_event_time_impl, times);
+        return;
+    }
+
     widget = allocated_bars[0].record;
-    statusbar_recording_widget_set_time(widget, current, total);
+    if (widget != NULL) {
+        statusbar_recording_widget_set_time(widget, current, total);
+    }
 }
 
+
+/** \brief Update playback status on the UI thread. */
+static gboolean ui_display_playback_impl(gpointer user_data)
+{
+    char *version = user_data;
+
+    ui_display_playback(0, version);
+    lib_free(version);
+    return FALSE;
+}
 
 /** \brief Statusbar API function to display playback status.
  *
@@ -2879,10 +2914,25 @@ void ui_display_event_time(unsigned int current, unsigned int total)
  */
 void ui_display_playback(int playback_status, char *version)
 {
-    GtkWidget *widget = allocated_bars[0].record;
+    GtkWidget *widget;
 
-    /* Ok to call from VICE thread */
-    statusbar_recording_widget_set_event_playback(widget, version);
+    if (mainlock_is_vice_thread()) {
+        gdk_threads_add_timeout(0, ui_display_playback_impl,
+                               version != NULL ? lib_strdup(version) : NULL);
+        return;
+    }
+
+    widget = allocated_bars[0].record;
+    if (widget != NULL) {
+        statusbar_recording_widget_set_event_playback(widget, version);
+    }
+}
+
+/** \brief Update recording status on the UI thread. */
+static gboolean ui_display_recording_impl(gpointer user_data)
+{
+    ui_display_recording(GPOINTER_TO_INT(user_data));
+    return FALSE;
 }
 
 /** \brief  Statusbar API function to display recording status.
@@ -2900,9 +2950,17 @@ void ui_display_recording(int recording_status)
 {
     GtkWidget *widget;
     DBG(("ui_display_recording: %d", recording_status));
-    /* Ok to call from VICE thread */
+
+    if (mainlock_is_vice_thread()) {
+        gdk_threads_add_timeout(0, ui_display_recording_impl,
+                               GINT_TO_POINTER(recording_status));
+        return;
+    }
+
     widget = allocated_bars[0].record;
-    statusbar_recording_widget_set_recording_status(widget, recording_status);
+    if (widget != NULL) {
+        statusbar_recording_widget_set_recording_status(widget, recording_status);
+    }
 }
 
 
@@ -2968,20 +3026,8 @@ void ui_display_joyport(uint16_t *joyport)
          * change. And yes, the input joystick ports are 1-indexed. I
          * don't know either. */
         if (sb_state->current_joyports[i] != joyport[i+1]) {
-            int j;
             sb_state->current_joyports[i] = joyport[i+1];
-            for (j = 0; j < MAX_STATUS_BARS; ++j) {
-                if (allocated_bars[j].joysticks) {
-                    GtkWidget *grid;
-                    GtkWidget *widget;
-
-                    grid = gtk_bin_get_child(GTK_BIN(allocated_bars[j].joysticks));
-                    widget = gtk_grid_get_child_at(GTK_GRID(grid), i + 1, 0);
-                    if (widget) {
-                        redraw_widget_on_ui_thread(widget);
-                    }
-                }
-            }
+            gdk_threads_add_timeout(0, redraw_joyport_on_ui_thread, GINT_TO_POINTER(i));
         }
     }
 
@@ -3009,6 +3055,28 @@ static GtkWidget *tape_get_motor_widget(int bar, int port)
 }
 
 
+/** \brief  Trigger redraw of a tape motor widget on the UI thread
+ *
+ * \param[in]   user_data   tape port index
+ *
+ * \return  FALSE
+ */
+static gboolean redraw_tape_motor_on_ui_thread(gpointer user_data)
+{
+    int port = GPOINTER_TO_INT(user_data);
+    int i;
+
+    for (i = 0; i < MAX_STATUS_BARS; ++i) {
+        GtkWidget *motor = tape_get_motor_widget(i, port);
+        if (motor != NULL) {
+            gtk_widget_queue_draw(motor);
+        }
+    }
+
+    return FALSE;
+}
+
+
 /** \brief  Statusbar API function to report changes in tape control status.
  *
  * \param[in]   port    tape port index (0 or 1)
@@ -3025,15 +3093,8 @@ void ui_display_tape_control_status(int port, int control)
     sb_state = lock_sb_state();
 
     if (control != sb_state->tape_control[port]) {
-        int i;
         sb_state->tape_control[port] = control;
-
-        for (i = 0; i < MAX_STATUS_BARS; ++i) {
-            GtkWidget *motor = tape_get_motor_widget(i, port);
-            if (motor != NULL) {
-                redraw_widget_on_ui_thread(motor);
-            }
-        }
+        gdk_threads_add_timeout(0, redraw_tape_motor_on_ui_thread, GINT_TO_POINTER(port));
     }
 
     unlock_sb_state();
@@ -3070,16 +3131,8 @@ void ui_display_tape_motor_status(int port, int motor)
     sb_state = lock_sb_state();
 
     if (motor != sb_state->tape_motor_status[port]) {
-        int i;
         sb_state->tape_motor_status[port] = motor;
-
-        for (i = 0; i < MAX_STATUS_BARS; ++i) {
-            GtkWidget *widget = tape_get_motor_widget(i, port);
-
-            if (widget != NULL) {
-                redraw_widget_on_ui_thread(widget);
-            }
-        }
+        gdk_threads_add_timeout(0, redraw_tape_motor_on_ui_thread, GINT_TO_POINTER(port));
     }
 
     unlock_sb_state();

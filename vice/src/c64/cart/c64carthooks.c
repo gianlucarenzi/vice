@@ -114,6 +114,7 @@
 #include "mach5.h"
 #include "machine.h"
 #include "magicdesk.h"
+#include "magicdeskplus.h"
 #include "magicdesk16.h"
 #include "magicformel.h"
 #include "magicvoice.h"
@@ -373,6 +374,9 @@ static const cmdline_option_t cmdline_options[] =
     { "-cartmd", CALL_FUNCTION, CMDLINE_ATTRIB_NEED_ARGS,
       cart_attach_cmdline, (void *)CARTRIDGE_MAGIC_DESK, NULL, NULL,
       "<Name>", "Attach raw 32/64/128KiB Magic Desk cartridge image" },
+    { "-cartmdp", CALL_FUNCTION, CMDLINE_ATTRIB_NEED_ARGS,
+      cart_attach_cmdline, (void *)CARTRIDGE_MAGIC_DESK_PLUS, NULL, NULL,
+      "<Name>", "Attach raw Magic Desk Plus cartridge image" },
     { "-cartmd16", CALL_FUNCTION, CMDLINE_ATTRIB_NEED_ARGS,
       cart_attach_cmdline, (void *)CARTRIDGE_MAGIC_DESK_16, NULL, NULL,
       "<Name>", "Attach raw up to 2048KiB Magic Desk 16K cartridge image" },
@@ -543,6 +547,7 @@ int cart_cmdline_options_init(void)
         || ltkernal_cmdline_options_init() < 0
         || megabyter_cmdline_options_init() < 0
         || mmcreplay_cmdline_options_init() < 0
+        || magicdeskplus_cmdline_options_init() < 0
         || retroreplay_cmdline_options_init() < 0
         || rexramfloppy_cmdline_options_init() < 0
         || rgcd_cmdline_options_init() < 0
@@ -611,6 +616,7 @@ int cart_resources_init(void)
         || ltkernal_resources_init() < 0
         || megabyter_resources_init() < 0
         || mmcreplay_resources_init() < 0
+        || magicdeskplus_resources_init() < 0
         || retroreplay_resources_init() < 0
         || rexramfloppy_resources_init() < 0
         || rgcd_resources_init() < 0
@@ -664,6 +670,7 @@ void cart_resources_shutdown(void)
     ltkernal_resources_shutdown();
     megabyter_resources_shutdown();
     mmcreplay_resources_shutdown();
+    magicdeskplus_resources_shutdown();
     retroreplay_resources_shutdown();
     rexramfloppy_resources_shutdown();
     rgcd_resources_shutdown();
@@ -1034,6 +1041,8 @@ int cart_bin_attach(int type, const char *filename, uint8_t *rawcart)
             return mach5_bin_attach(filename, rawcart);
         case CARTRIDGE_MAGIC_DESK:
             return magicdesk_bin_attach(filename, rawcart);
+        case CARTRIDGE_MAGIC_DESK_PLUS:
+            return magicdeskplus_bin_attach(filename, rawcart);
         case CARTRIDGE_MAGIC_DESK_16:
             return magicdesk16_bin_attach(filename, rawcart);
         case CARTRIDGE_MAGIC_FORMEL:
@@ -1302,6 +1311,9 @@ void cart_attach(int type, uint8_t *rawcart)
             break;
         case CARTRIDGE_MAGIC_DESK:
             magicdesk_config_setup(rawcart);
+            break;
+        case CARTRIDGE_MAGIC_DESK_PLUS:
+            magicdeskplus_config_setup(rawcart);
             break;
         case CARTRIDGE_MAGIC_DESK_16:
             magicdesk16_config_setup(rawcart);
@@ -1931,6 +1943,9 @@ void cart_detach(int type)
         case CARTRIDGE_MAGIC_DESK:
             magicdesk_detach();
             break;
+        case CARTRIDGE_MAGIC_DESK_PLUS:
+            magicdeskplus_detach();
+            break;
         case CARTRIDGE_MAGIC_DESK_16:
             magicdesk16_detach();
             break;
@@ -2095,6 +2110,7 @@ void cartridge_shutdown(void)
     /* "Slot 0" */
     tpi_shutdown();
     magicvoice_shutdown();
+    magicdeskplus_shutdown();
     /* mmc64_shutdown(); */
     /* ieeeflash64_shutdown(); */
 
@@ -2245,6 +2261,9 @@ void cartridge_init_config(void)
                 break;
             case CARTRIDGE_MAGIC_DESK:
                 magicdesk_config_init();
+                break;
+            case CARTRIDGE_MAGIC_DESK_PLUS:
+                magicdeskplus_config_init();
                 break;
             case CARTRIDGE_MAGIC_DESK_16:
                 magicdesk16_config_init();
@@ -2844,10 +2863,7 @@ int cartridge_can_flush_image(int crtid)
 {
     const char *p;
 
-    if ((machine_class == VICE_MACHINE_C128) && CARTRIDGE_C128_ISID(crtid)) {
-        return c128cartridge->can_flush_image(crtid);
-    }
-
+    /* cart must be enabled and a filename set */
     if (!cartridge_type_enabled(crtid)) {
         return 0;
     }
@@ -2855,18 +2871,23 @@ int cartridge_can_flush_image(int crtid)
     if ((p == NULL) || (*p == '\x0')) {
         return 0;
     }
+
+    if ((machine_class == VICE_MACHINE_C128) && CARTRIDGE_C128_ISID(crtid)) {
+        return c128cartridge->can_flush_image(crtid);
+    }
     return 1;
 }
 
 /* returns 1 when secondary cartridge image can be flushed */
 int cartridge_can_flush_secondary_image(int crtid)
 {
-    if ((machine_class == VICE_MACHINE_C128) && CARTRIDGE_C128_ISID(crtid)) {
-        return c128cartridge->can_flush_secondary_image(crtid);
-    }
-
+    /* cart must be enabled */
     if (!cartridge_type_enabled(crtid)) {
         return 0;
+    }
+
+    if ((machine_class == VICE_MACHINE_C128) && CARTRIDGE_C128_ISID(crtid)) {
+        return c128cartridge->can_flush_secondary_image(crtid);
     }
 
     switch (crtid) {
@@ -2877,6 +2898,8 @@ int cartridge_can_flush_secondary_image(int crtid)
         /* "Main Slot" */
         case CARTRIDGE_GMOD2:
             return gmod2_can_flush_eeprom();
+        case CARTRIDGE_MAGIC_DESK_PLUS:
+            return magicdeskplus_can_flush_sram();
         case CARTRIDGE_MMC_REPLAY:
             return mmcreplay_can_flush_eeprom();
         case CARTRIDGE_REX_RAMFLOPPY:
@@ -2889,12 +2912,13 @@ int cartridge_can_flush_secondary_image(int crtid)
 /* returns 1 when cartridge (ROM) image can be saved */
 int cartridge_can_save_image(int crtid)
 {
-    if ((machine_class == VICE_MACHINE_C128) && CARTRIDGE_C128_ISID(crtid)) {
-        return c128cartridge->can_save_image(crtid);
-    }
-
+    /* cart must be enabled */
     if (!cartridge_type_enabled(crtid)) {
         return 0;
+    }
+
+    if ((machine_class == VICE_MACHINE_C128) && CARTRIDGE_C128_ISID(crtid)) {
+        return c128cartridge->can_save_image(crtid);
     }
 
     return 1;
@@ -2903,12 +2927,13 @@ int cartridge_can_save_image(int crtid)
 /* returns 1 when secondary cartridge image can be saved */
 int cartridge_can_save_secondary_image(int crtid)
 {
-    if ((machine_class == VICE_MACHINE_C128) && CARTRIDGE_C128_ISID(crtid)) {
-        return c128cartridge->can_save_secondary_image(crtid);
-    }
-
+    /* cart must be enabled */
     if (!cartridge_type_enabled(crtid)) {
         return 0;
+    }
+
+    if ((machine_class == VICE_MACHINE_C128) && CARTRIDGE_C128_ISID(crtid)) {
+        return c128cartridge->can_save_secondary_image(crtid);
     }
 
     switch (crtid) {
@@ -2919,10 +2944,42 @@ int cartridge_can_save_secondary_image(int crtid)
         /* "Main Slot" */
         case CARTRIDGE_GMOD2:
             return 1;
+        case CARTRIDGE_MAGIC_DESK_PLUS:
+            return magicdeskplus_can_save_sram();
         case CARTRIDGE_MMC_REPLAY:
             return 1;
         case CARTRIDGE_REX_RAMFLOPPY:
             return 1;
+    }
+
+    return 0;
+}
+
+/* returns 1 when tertiary cartridge image can be flushed */
+int cartridge_can_flush_tertiary_image(int crtid)
+{
+    if (!cartridge_type_enabled(crtid)) {
+        return 0;
+    }
+
+    switch (crtid) {
+        case CARTRIDGE_MAGIC_DESK_PLUS:
+            return magicdeskplus_can_flush_eeprom();
+    }
+
+    return 0;
+}
+
+/* returns 1 when tertiary cartridge image can be saved */
+int cartridge_can_save_tertiary_image(int crtid)
+{
+    if (!cartridge_type_enabled(crtid)) {
+        return 0;
+    }
+
+    switch (crtid) {
+        case CARTRIDGE_MAGIC_DESK_PLUS:
+            return magicdeskplus_can_save_eeprom();
     }
 
     return 0;
@@ -2997,12 +3054,27 @@ int cartridge_flush_secondary_image(int type)
         /* "Main Slot" */
         case CARTRIDGE_GMOD2:
             return gmod2_flush_eeprom();
+        case CARTRIDGE_MAGIC_DESK_PLUS:
+            return magicdeskplus_sram_flush();
         case CARTRIDGE_MMC_REPLAY:
             return mmcreplay_flush_eeprom();
         case CARTRIDGE_REX_RAMFLOPPY:
             return rexramfloppy_ram_flush();
     }
     log_error(LOG_DEFAULT, "Failed flushing secondary image for cartridge ID %d.", type);
+    return -1;
+}
+
+int cartridge_flush_tertiary_image(int type)
+{
+    switch (type) {
+        case CARTRIDGE_MAGIC_DESK_PLUS:
+            return magicdeskplus_eeprom_flush();
+    }
+
+    log_error(LOG_DEFAULT,
+              "Failed flushing tertiary image for cartridge ID %d.",
+              type);
     return -1;
 }
 
@@ -3077,12 +3149,27 @@ int cartridge_save_secondary_image(int type, const char *filename)
         /* "Main Slot" */
         case CARTRIDGE_GMOD2:
             return gmod2_eeprom_save(filename);
+        case CARTRIDGE_MAGIC_DESK_PLUS:
+            return magicdeskplus_sram_save(filename);
         case CARTRIDGE_MMC_REPLAY:
             return mmcreplay_save_eeprom(filename);
         case CARTRIDGE_REX_RAMFLOPPY:
             return rexramfloppy_ram_save(filename);
     }
     log_error(LOG_DEFAULT, "Failed saving secondary image for cartridge ID %d.\n", type);
+    return -1;
+}
+
+int cartridge_save_tertiary_image(int type, const char *filename)
+{
+    switch (type) {
+        case CARTRIDGE_MAGIC_DESK_PLUS:
+            return magicdeskplus_eeprom_save(filename);
+    }
+
+    log_error(LOG_DEFAULT,
+              "Failed saving tertiary image for cartridge ID %d.\n",
+              type);
     return -1;
 }
 
@@ -3299,6 +3386,43 @@ void cartridge_mmu_translate(unsigned int addr, uint8_t **base, int *start, int 
 /*
     Snapshot reading and writing
 */
+
+/* C64CART 0.1 snapshot module format:
+
+   type  | name                             | description
+   ------------------------------------------------------
+   BYTE  | num carts                        | number of active cartridges
+   DWORD | mem_cartridge_type               |
+   BYTE  | game                             |
+   BYTE  | exrom                            |
+   DWORD | romh_bank                        |
+   DWORD | roml_bank                        |
+   BYTE  | export_ram                       |
+   BYTE  | ultimax_phi1                     |
+   BYTE  | ultimax_phi2                     |
+   CLOCK | cart_freeze_alarm_time           |
+   CLOCK | cart_nmi_alarm_time              |
+   BYTE  | export_slot1.game                |
+   BYTE  | export_slot1.exrom               |
+   BYTE  | export_slot1.ultimax_phi1        |
+   BYTE  | export_slot1.ultimax_phi2        |
+   BYTE  | export_slotmain.game             |
+   BYTE  | export_slotmain.exrom            |
+   BYTE  | export_slotmain.ultimax_phi1     |
+   BYTE  | export_slotmain.ultimax_phi2     |
+   BYTE  | export_passthrough.game          |
+   BYTE  | export_passthrough.exrom         |
+   BYTE  | export_passthrough.ultimax_phi1  |
+   BYTE  | export_passthrough.ultimax_phi2  |
+   DWORD | reserved                         |
+   DWORD | reserved                         |
+   DWORD | reserved                         |
+   DWORD | reserved                         |
+   ARRAY | cart ids                         | <num cart> IDs of active cartridges
+
+   followed by individual cartridge modules
+
+ */
 
 #define C64CART_DUMP_MAX_CARTS  16
 
@@ -3672,6 +3796,11 @@ int cartridge_snapshot_write_modules(struct snapshot_s *s)
                     break;
                 case CARTRIDGE_MAGIC_DESK:
                     if (magicdesk_snapshot_write_module(s) < 0) {
+                        return -1;
+                    }
+                    break;
+                case CARTRIDGE_MAGIC_DESK_PLUS:
+                    if (magicdeskplus_snapshot_write_module(s) < 0) {
                         return -1;
                     }
                     break;
@@ -4302,6 +4431,11 @@ int cartridge_snapshot_read_modules(struct snapshot_s *s)
                     break;
                 case CARTRIDGE_MAGIC_DESK:
                     if (magicdesk_snapshot_read_module(s) < 0) {
+                        goto fail2;
+                    }
+                    break;
+                case CARTRIDGE_MAGIC_DESK_PLUS:
+                    if (magicdeskplus_snapshot_read_module(s) < 0) {
                         goto fail2;
                     }
                     break;

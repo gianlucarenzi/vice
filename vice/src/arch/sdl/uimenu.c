@@ -498,7 +498,9 @@ static int sdl_ui_display_item(ui_menu_entry_t *item, int y_pos, int value_offse
     const char *itemdata;
     uint8_t oldbg = 0, oldfg = 1;
 
-    if ((item->string == NULL) || (item->string[0] == 0)) {
+    if ((item == NULL) ||
+        (item->string == NULL) ||
+        (item->string[0] == 0)) {
         return -1;
     }
 
@@ -619,7 +621,8 @@ static void sdl_ui_menu_redraw(ui_menu_entry_t *menu, const char *title, int off
     sdl_ui_clear();
     sdl_ui_display_title(title);
 
-    while ((menu[i + offset].string != NULL) && (i <= (menu_draw.max_text_y - MENU_FIRST_Y))) {
+    while ((menu[i + offset].string != NULL) &&
+           (i <= (menu_draw.max_text_y - MENU_FIRST_Y))) {
         sdl_ui_display_item(&(menu[i + offset]), i, value_offsets[i + offset], (i == cur_offset));
         ++i;
     }
@@ -2000,6 +2003,12 @@ void sdl_ui_set_menu_font(uint8_t *font, int w, int h)
         menufont.translate[i] = h * sdl_char_to_screen[i];
     }
     sdl_ui_set_active_font(MENU_FONT_ASCII);
+}
+
+void sdl_ui_get_menu_font_size(int *w, int *h)
+{
+    *w = menufont.w;
+    *h = menufont.h;
 }
 
 void sdl_ui_set_image_font(uint8_t *font, int w, int h)

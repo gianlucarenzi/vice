@@ -443,7 +443,7 @@
                 }                                                              \
                 if (monitor_mask[CALLER] & (MI_WATCH)) {                       \
                     EXPORT_REGISTERS();                                        \
-                    monitor_check_watchpoints(LAST_OPCODE_ADDR, (uint16_t)reg_pc); \
+                    monitor_check_watchpoints(ORIGIN_MEMSPACE, LAST_OPCODE_ADDR, (uint16_t)reg_pc); \
                     IMPORT_REGISTERS();                                        \
                 }                                                              \
             }                                                                  \
@@ -1505,7 +1505,7 @@ FIXME: perhaps we really have to add some randomness to (some) bits
         CLK_INC();            \
         tmp |= (PULL() << 8); \
         CLK_INC();            \
-        LOAD(tmp);            \
+        LOAD_DUMMY(tmp);      \
         CLK_INC();            \
         tmp++;                \
         JUMP(tmp);            \

@@ -28,6 +28,7 @@
 #include "vice.h"
 
 #include <stdlib.h>
+#include <math.h>
 
 #include "lib.h"
 #include "menu_common.h"
@@ -65,7 +66,106 @@ static UI_MENU_CALLBACK(custom_SidModel_callback)
 
 static ui_menu_entry_t *sid_model_menu = NULL;
 
-#ifdef HAVE_RESID
+#if defined(HAVE_RESIDFP)
+
+static ui_menu_entry_t *sid_profile_menu = NULL;
+
+static int sid_profile_selected = -1;
+
+typedef struct {
+    char *name;
+    double value;
+} filter_map_t;
+
+/* taken from https://github.com/libsidplayfp/sidplayfp/blob/c44e4c0e74c12401a6dbef0ea371e34a30de099d/src/player.cpp#L138 */
+static const filter_map_t filterRangeMap[] =
+{
+    { "Anthony Lees",                        1.3 },
+    { "Antony Crowther (Ratt)",              1.1 },
+    { "Barry Leitch (The Jackal)",           0.3 },
+    { "Ben Daglish",                         0.6 },
+    { "Carsten Berggreen (Scarzix)",         0.7 },
+    { "Charles Deenen",                      0.2 },
+    { "Chris Huelsbeck",                     0.9 },
+    { "David Dunn",                          0.1 },
+    { "David Dunn & Aidan Bell",             0.1 },
+    { "David Whittaker",                     0.15 },
+    { "Edwin van Santen",                    0.5 },
+    { "Edwin van Santen & Falco Paul",       0.4 },
+    { "Edwin van Santen & Venom",            0.4 },
+    { "Falco Paul",                          0.15 },
+    { "Falco Paul & Edwin van Santen",       0.4 },
+    { "Figge Wasberger (Fegolhuzz)",         0.25 },
+    { "Fred Gray",                           0.4 },
+    { "Geir Tjelta",                         0.5 },
+    { "Geoff Follin",                        0.85 },
+    { "Georg Feil",                          0.2 },
+    { "Glenn Rune Gallefoss",                1.3 },
+    { "Graham Jarvis & Rob Hartshorne",      0.25 },
+    { "Jason Page",                          0.35 },
+    { "Jeroen Tel",                          0.35 },
+    { "Johannes Bjerregaard",                0.35 },
+    { "Jonathan Dunn",                       0.25 },
+    { "Jouni Ikonen (Mixer)",                0.25 },
+    { "Jori Olkkonen",                       0.15 },
+    { "Jori Olkkonen (Yip)",                 0.35 },
+    { "Kim Christensen (Future Freak)",      0.35 },
+    { "Linus Akesson (lft)",                 0.3 },
+    { "Mark Cooksey",                        0.4 },
+    { "Mark Wilson",                         0.2 },
+    { "Markus Mueller (Superbrain)",         0.5 },
+    { "Martin Galway",                       0.65 },
+    { "Martin Walker",                       0.15 },
+    { "Matt Gray",                           0.3 },
+    { "Michael Hendriks",                    0.35 },
+    { "Mitch & Dane",                        0.85 },
+    { "M. Nilsson-Vonderburgh (Mic)",        0.3 },
+    { "M. Nilsson-Vonderburgh (Mitch)",      0.3 },
+    { "M. Nilsson-Vonderburgh (Yankee)",     0.3 },
+    { "NM156",                               0.7 },
+    { "Neil Brennan",                        0.25 },
+    { "Peter Clarke",                        0.2 },
+    { "Pex Tufvesson (Mahoney)",             0.35 },
+    { "Pex Tufvesson (Zax)",                 0.35 },
+    { "Renato Brosowski (Zoci-Joe)",         0.3 },
+    { "Reyn Ouwehand",                       0.8 },
+    { "Richard Joseph",                      0.3 },
+    { "Rob Hubbard",                         0.35 },
+    { "Russell Lieblich",                    0.25 },
+    { "Stellan Andersson (Dane)",            0.85 },
+    { "Steve Turner",                        0.6 },
+    { "Tim Follin",                          0.5 },
+    { "Thomas E. Petersen (Laxity)",         0.3 },
+    { "Thomas E. Petersen (TSS)",            0.3 },
+    { "Thomas Mogensen (DRAX)",              0.3 },
+    { NULL, 0.0 },
+};
+
+static UI_MENU_CALLBACK(custom_SidProfile_callback)
+{
+    int selected;
+    double value;
+    int value_int;
+
+    selected = vice_ptr_to_int(param);
+    if (activated) {
+        sid_profile_selected = selected;
+        value = ((filterRangeMap[selected].value * 20.0f) - 1.0f) / 39.0f;
+        value_int = (int)round(value * 1000.0f);
+        resources_set_int("SidResid6581FilterCurve", RESIDFP_6581_FILTER_CURVE_DEFAULT);
+        resources_set_int("SidResidCombinedWaveformStrength", RESIDFP_COMBINED_WAVEFORM_STRENGTH_DEFAULT);
+        resources_set_int("SidResid6581FilterRange", value_int);
+    } else {
+        if (selected == sid_profile_selected) {
+            return sdl_menu_text_tick;
+        }
+    }
+
+    return NULL;
+}
+#endif
+
+#if defined(HAVE_RESID) || defined(HAVE_RESIDFP)
 UI_MENU_DEFINE_RADIO(SidResidSampling)
 
 static const ui_menu_entry_t sid_sampling_menu[] = {
@@ -91,7 +191,9 @@ static const ui_menu_entry_t sid_sampling_menu[] = {
     },
     SDL_MENU_LIST_END
 };
+#endif
 
+#ifdef HAVE_RESID
 UI_MENU_DEFINE_SLIDER(SidResidPassband, 0, 90)
 UI_MENU_DEFINE_SLIDER(SidResidGain, 90, 100)
 UI_MENU_DEFINE_SLIDER(SidResidFilterBias, -5000, 5000)
@@ -168,6 +270,51 @@ UI_MENU_DEFINE_SLIDER(SidResid8580FilterBias, -5000, 5000)
 #endif
 
 #endif /* HAVE_RESID */
+
+#ifdef HAVE_RESIDFP
+UI_MENU_DEFINE_SLIDER(SidResid6581FilterCurve, 0, RESIDFP_6581_FILTER_CURVE_MAX)
+UI_MENU_DEFINE_SLIDER(SidResid6581FilterRange, 0, RESIDFP_6581_FILTER_RANGE_MAX)
+UI_MENU_DEFINE_SLIDER(SidResid8580FilterCurve, 0, RESIDFP_8580_FILTER_CURVE_MAX)
+UI_MENU_DEFINE_SLIDER(SidResidCombinedWaveformStrength, 0, RESIDFP_COMBINED_WAVEFORM_STRENGTH_MAX)
+UI_MENU_DEFINE_TOGGLE(SidResid6581OldCaps)
+
+# define VICE_SDL_RESIDFP_OPTIONS                                                                                             \
+    {   .string   = "reSIDfp Profile",                                                                                        \
+        .type     = MENU_ENTRY_SUBMENU,                                                                                       \
+        .callback = submenu_radio_callback,                                                                                   \
+        .data     = (ui_callback_data_t)0xdeadc0de,                                                                           \
+    },                                                                                                                        \
+    {   .string   = "reSIDfp sampling method",                                                                                \
+        .type     = MENU_ENTRY_SUBMENU,                                                                                       \
+        .callback = submenu_radio_callback,                                                                                   \
+        .data     = (ui_callback_data_t)sid_sampling_menu                                                                     \
+    },                                                                                                                        \
+    {   .string   = "reSIDfp 6581 filter curve",                                                                              \
+        .type     = MENU_ENTRY_RESOURCE_INT,                                                                                  \
+        .callback = slider_SidResid6581FilterCurve_callback,                                                                  \
+        .data     = (ui_callback_data_t)"Set filter curve"                                                                    \
+    },                                                                                                                        \
+    {   .string   = "reSIDfp 6581 filter range",                                                                              \
+        .type     = MENU_ENTRY_RESOURCE_INT,                                                                                  \
+        .callback = slider_SidResid6581FilterRange_callback,                                                                  \
+        .data     = (ui_callback_data_t)"Set filter range"                                                                    \
+    },                                                                                                                        \
+    {   .string   = "reSIDfp 8580 filter curve",                                                                              \
+        .type     = MENU_ENTRY_RESOURCE_INT,                                                                                  \
+        .callback = slider_SidResid8580FilterCurve_callback,                                                                  \
+        .data     = (ui_callback_data_t)"Set filter curve"                                                                    \
+    },                                                                                                                        \
+    {   .string   = "reSIDfp 6581 mixed wave strength",                                                                       \
+        .type     = MENU_ENTRY_RESOURCE_INT,                                                                                  \
+        .callback = slider_SidResidCombinedWaveformStrength_callback,                                                         \
+        .data     = (ui_callback_data_t)"Set mixed waveform strength"                                                         \
+    },                                                                                                                        \
+    {   .string   = "reSIDfp 6581 old 2200pf caps",                                                                           \
+        .type     = MENU_ENTRY_RESOURCE_TOGGLE,                                                                               \
+        .callback = toggle_SidResid6581OldCaps_callback,                                                                      \
+    },
+#endif /* HAVE_RESIDFP */
+
 
 #ifdef HAVE_USBSID
 UI_MENU_DEFINE_TOGGLE(SidUSBSIDReadMode)
@@ -257,6 +404,7 @@ static const ui_menu_entry_t us_buffsize_menu[] = {
 #endif /* HAVE_USBSID */
 
 
+#if defined(HAVE_FASTSID) || defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP)
 UI_MENU_DEFINE_TOGGLE(SidFilters)
 UI_MENU_DEFINE_RADIO(SidStereo)
 UI_MENU_DEFINE_RADIO(Sid2AddressStart)
@@ -266,6 +414,8 @@ UI_MENU_DEFINE_RADIO(Sid5AddressStart)
 UI_MENU_DEFINE_RADIO(Sid6AddressStart)
 UI_MENU_DEFINE_RADIO(Sid7AddressStart)
 UI_MENU_DEFINE_RADIO(Sid8AddressStart)
+UI_MENU_DEFINE_RADIO(Sid9AddressStart)
+UI_MENU_DEFINE_RADIO(Sid10AddressStart)
 
 #define SID_D4XX_MENU(menu, txt, showcb, cb)    \
 static const ui_menu_entry_t menu[] = {         \
@@ -648,6 +798,45 @@ SID_EXTRA_MENU(5, "Fifth")
 SID_EXTRA_MENU(6, "Sixth")
 SID_EXTRA_MENU(7, "Seventh")
 SID_EXTRA_MENU(8, "Eight")
+SID_EXTRA_MENU(9, "Ninth")
+SID_EXTRA_MENU(10, "Tenth")
+
+#define SID_MODEL_MENU(sid_nr)                                  \
+    UI_MENU_DEFINE_RADIO(Sid##sid_nr##Model)                    \
+                                                                \
+    static const ui_menu_entry_t sid##sid_nr##_model_menu[] = { \
+        {   .string   = "Same as SID #1",                       \
+            .type     = MENU_ENTRY_RESOURCE_RADIO,              \
+            .callback = radio_Sid##sid_nr##Model_callback,      \
+            .data     = (ui_callback_data_t)-1                  \
+        },                                                      \
+        {   .string   = "6581",                                 \
+            .type     = MENU_ENTRY_RESOURCE_RADIO,              \
+            .callback = radio_Sid##sid_nr##Model_callback,      \
+            .data     = (ui_callback_data_t)SID_MODEL_6581      \
+        },                                                      \
+        {   .string   = "8580",                                 \
+            .type     = MENU_ENTRY_RESOURCE_RADIO,              \
+            .callback = radio_Sid##sid_nr##Model_callback,      \
+            .data     = (ui_callback_data_t)SID_MODEL_8580      \
+        },                                                      \
+        {   .string   = "8580 + digi boost",                    \
+            .type     = MENU_ENTRY_RESOURCE_RADIO,              \
+            .callback = radio_Sid##sid_nr##Model_callback,      \
+            .data     = (ui_callback_data_t)SID_MODEL_8580D     \
+        },                                                      \
+        SDL_MENU_LIST_END                                       \
+    };
+
+SID_MODEL_MENU(2)
+SID_MODEL_MENU(3)
+SID_MODEL_MENU(4)
+SID_MODEL_MENU(5)
+SID_MODEL_MENU(6)
+SID_MODEL_MENU(7)
+SID_MODEL_MENU(8)
+SID_MODEL_MENU(9)
+SID_MODEL_MENU(10)
 
 static UI_MENU_CALLBACK(show_SidStereo_callback)
 {
@@ -669,6 +858,10 @@ static UI_MENU_CALLBACK(show_SidStereo_callback)
             return "Six";
         case 7:
             return "Seven";
+        case 8:
+            return "Eight";
+        case 9:
+            return "Nine";
     }
     return "None";
 }
@@ -714,14 +907,27 @@ static const ui_menu_entry_t c64_stereo_sid_menu[] = {
         .callback = radio_SidStereo_callback,
         .data     = (ui_callback_data_t)7
     },
+    {   .string   = "Eight",
+        .type     = MENU_ENTRY_RESOURCE_RADIO,
+        .callback = radio_SidStereo_callback,
+        .data     = (ui_callback_data_t)8
+    },
+    {   .string   = "Nine",
+        .type     = MENU_ENTRY_RESOURCE_RADIO,
+        .callback = radio_SidStereo_callback,
+        .data     = (ui_callback_data_t)9
+    },
     SDL_MENU_LIST_END
 };
+#endif /* defined(HAVE_FASTSID) || defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP) */
 
 ui_menu_entry_t sid_c64_menu[] = {
+    /* CAUTION: position is hardcoded below */
     {   .string   = "SID Model",
         .type     = MENU_ENTRY_SUBMENU,
         .callback = submenu_radio_callback,
     },
+#if defined(HAVE_FASTSID) || defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP)
     {   .string   = "Extra SIDs",
         .type     = MENU_ENTRY_SUBMENU,
         .callback = show_SidStereo_callback,
@@ -762,12 +968,71 @@ ui_menu_entry_t sid_c64_menu[] = {
         .callback = show_Sid8AddressStart_callback,
         .data     = (ui_callback_data_t)c64_sid8_base_menu
     },
+    {   .string   = "Ninth SID base address",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = show_Sid9AddressStart_callback,
+        .data     = (ui_callback_data_t)c64_sid9_base_menu
+    },
+    {   .string   = "Tenth SID base address",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = show_Sid10AddressStart_callback,
+        .data     = (ui_callback_data_t)c64_sid10_base_menu
+    },
+    {   .string   = "Second SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid2_model_menu
+    },
+    {   .string   = "Third SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid3_model_menu
+    },
+    {   .string   = "Fourth SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid4_model_menu
+    },
+    {   .string   = "Fifth SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid5_model_menu
+    },
+    {   .string   = "Sixth SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid6_model_menu
+    },
+    {   .string   = "Seventh SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid7_model_menu
+    },
+    {   .string   = "Eighth SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid8_model_menu
+    },
+    {   .string   = "Ninth SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid9_model_menu
+    },
+    {   .string   = "Tenth SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid10_model_menu
+    },
     {   .string   = "Emulate filters",
         .type     = MENU_ENTRY_RESOURCE_TOGGLE,
         .callback = toggle_SidFilters_callback,
     },
+#endif
 #ifdef HAVE_RESID
     VICE_SDL_RESID_OPTIONS
+#endif
+#ifdef HAVE_RESIDFP
+    VICE_SDL_RESIDFP_OPTIONS
 #endif
 #ifdef HAVE_USBSID
     VICE_SDL_USBSID_OPTIONS
@@ -776,10 +1041,12 @@ ui_menu_entry_t sid_c64_menu[] = {
 };
 
 ui_menu_entry_t sid_c128_menu[] = {
+    /* CAUTION: position is hardcoded below */
     {   .string   = "SID Model",
         .type     = MENU_ENTRY_SUBMENU,
         .callback = submenu_radio_callback
     },
+#if defined(HAVE_FASTSID) || defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP)
     {   .string   = "Extra SIDs",
         .type     = MENU_ENTRY_SUBMENU,
         .callback = show_SidStereo_callback,
@@ -820,12 +1087,71 @@ ui_menu_entry_t sid_c128_menu[] = {
         .callback = show_Sid8AddressStart_callback,
         .data     = (ui_callback_data_t)c128_sid8_base_menu
     },
+    {   .string   = "Ninth SID base address",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = show_Sid9AddressStart_callback,
+        .data     = (ui_callback_data_t)c128_sid9_base_menu
+    },
+    {   .string   = "Tenth SID base address",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = show_Sid10AddressStart_callback,
+        .data     = (ui_callback_data_t)c128_sid10_base_menu
+    },
+    {   .string   = "Second SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid2_model_menu
+    },
+    {   .string   = "Third SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid3_model_menu
+    },
+    {   .string   = "Fourth SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid4_model_menu
+    },
+    {   .string   = "Fifth SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid5_model_menu
+    },
+    {   .string   = "Sixth SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid6_model_menu
+    },
+    {   .string   = "Seventh SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid7_model_menu
+    },
+    {   .string   = "Eighth SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid8_model_menu
+    },
+    {   .string   = "Ninth SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid9_model_menu
+    },
+    {   .string   = "Tenth SID model",
+        .type     = MENU_ENTRY_SUBMENU,
+        .callback = submenu_radio_callback,
+        .data     = (ui_callback_data_t)sid10_model_menu
+    },
     {   .string   = "Emulate filters",
         .type     = MENU_ENTRY_RESOURCE_TOGGLE,
         .callback = toggle_SidFilters_callback
     },
+#endif
 #ifdef HAVE_RESID
     VICE_SDL_RESID_OPTIONS
+#endif
+#ifdef HAVE_RESIDFP
+    VICE_SDL_RESIDFP_OPTIONS
 #endif
 #ifdef HAVE_USBSID
     VICE_SDL_USBSID_OPTIONS
@@ -834,16 +1160,22 @@ ui_menu_entry_t sid_c128_menu[] = {
 };
 
 ui_menu_entry_t sid_cbm2_menu[] = {
+    /* CAUTION: position is hardcoded below */
     {   .string   = "SID Model",
         .type     = MENU_ENTRY_SUBMENU,
         .callback = submenu_radio_callback
     },
+#if defined(HAVE_FASTSID) || defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP)
     {   .string   = "Emulate filters",
         .type     = MENU_ENTRY_RESOURCE_TOGGLE,
         .callback = toggle_SidFilters_callback
     },
+#endif
 #ifdef HAVE_RESID
     VICE_SDL_RESID_OPTIONS
+#endif
+#ifdef HAVE_RESIDFP
+    VICE_SDL_RESIDFP_OPTIONS
 #endif
 #ifdef HAVE_USBSID
     VICE_SDL_USBSID_OPTIONS
@@ -852,16 +1184,22 @@ ui_menu_entry_t sid_cbm2_menu[] = {
 };
 
 ui_menu_entry_t sid_dtv_menu[] = {
+    /* CAUTION: position is hardcoded below */
     {   .string   = "SID Model",
         .type     = MENU_ENTRY_SUBMENU,
         .callback = submenu_radio_callback
     },
+#if defined(HAVE_FASTSID) || defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP)
     {   .string   = "Emulate filters",
         .type     = MENU_ENTRY_RESOURCE_TOGGLE,
         .callback = toggle_SidFilters_callback
     },
+#endif
 #ifdef HAVE_RESID
     VICE_SDL_RESID_OPTIONS
+#endif
+#ifdef HAVE_RESIDFP
+    VICE_SDL_RESIDFP_OPTIONS
 #endif
 #ifdef HAVE_USBSID
     VICE_SDL_USBSID_OPTIONS
@@ -878,16 +1216,22 @@ ui_menu_entry_t sid_vic_menu[] = {
         .type     = MENU_ENTRY_RESOURCE_TOGGLE,
         .callback = toggle_SidCart_callback
     },
+    /* CAUTION: position is hardcoded below */
     {   .string   = "SID Model",
         .type     = MENU_ENTRY_SUBMENU,
         .callback = submenu_radio_callback
     },
+#if defined(HAVE_FASTSID) || defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP)
     {   .string   = "Emulate filters",
         .type     = MENU_ENTRY_RESOURCE_TOGGLE,
         .callback = toggle_SidFilters_callback
     },
+#endif
 #ifdef HAVE_RESID
     VICE_SDL_RESID_OPTIONS
+#endif
+#ifdef HAVE_RESIDFP
+    VICE_SDL_RESIDFP_OPTIONS
 #endif
 #ifdef HAVE_USBSID
     VICE_SDL_USBSID_OPTIONS
@@ -925,16 +1269,22 @@ ui_menu_entry_t sid_pet_menu[] = {
         .type     = MENU_ENTRY_RESOURCE_TOGGLE,
         .callback = toggle_SidCart_callback
     },
+    /* CAUTION: position is hardcoded below */
     {   .string   = "SID Model",
         .type     = MENU_ENTRY_SUBMENU,
         .callback = submenu_radio_callback
     },
+#if defined(HAVE_FASTSID) || defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP)
     {   .string   = "Emulate filters",
         .type     = MENU_ENTRY_RESOURCE_TOGGLE,
         .callback = toggle_SidFilters_callback
     },
+#endif
 #ifdef HAVE_RESID
     VICE_SDL_RESID_OPTIONS
+#endif
+#ifdef HAVE_RESIDFP
+    VICE_SDL_RESIDFP_OPTIONS
 #endif
 #ifdef HAVE_USBSID
     VICE_SDL_USBSID_OPTIONS
@@ -974,16 +1324,22 @@ ui_menu_entry_t sid_plus4_menu[] = {
         .type     = MENU_ENTRY_RESOURCE_TOGGLE,
         .callback = toggle_SidCart_callback
     },
+    /* CAUTION: position is hardcoded below */
     {   .string   = "SID Model",
         .type     = MENU_ENTRY_SUBMENU,
         .callback = submenu_radio_callback
     },
+#if defined(HAVE_FASTSID) || defined(HAVE_RESID) || defined(HAVE_RESID_DTV) || defined(HAVE_RESIDFP)
     {   .string   = "Emulate filters",
         .type     = MENU_ENTRY_RESOURCE_TOGGLE,
         .callback = toggle_SidFilters_callback
     },
+#endif
 #ifdef HAVE_RESID
     VICE_SDL_RESID_OPTIONS
+#endif
+#ifdef HAVE_RESIDFP
+    VICE_SDL_RESIDFP_OPTIONS
 #endif
 #ifdef HAVE_USBSID
     VICE_SDL_USBSID_OPTIONS
@@ -1029,6 +1385,7 @@ void uisid_menu_create(void)
     sid_engine_model_t **list = sid_get_engine_model_list();
     int i;
 
+    /* create "Sid Model" menu */
     for (i = 0; list[i]; ++i) {}
 
     sid_model_menu = lib_malloc((i + 1) * sizeof(ui_menu_entry_t));
@@ -1049,6 +1406,37 @@ void uisid_menu_create(void)
     sid_vic_menu[1].data   = (ui_callback_data_t)sid_model_menu;
     sid_pet_menu[1].data   = (ui_callback_data_t)sid_model_menu;
     sid_plus4_menu[1].data = (ui_callback_data_t)sid_model_menu;
+
+#ifdef HAVE_RESIDFP
+    /* create "SID Profile" Menu */
+    for (i = 0; filterRangeMap[i].name; ++i) {}
+
+    sid_profile_menu = lib_malloc((i + 1) * sizeof(ui_menu_entry_t));
+
+    for (i = 0; filterRangeMap[i].name; ++i) {
+        sid_profile_menu[i].action   = ACTION_NONE;
+        sid_profile_menu[i].string   = (char*)filterRangeMap[i].name;
+        sid_profile_menu[i].type     = MENU_ENTRY_RESOURCE_RADIO;
+        sid_profile_menu[i].callback = custom_SidProfile_callback;
+        sid_profile_menu[i].data     = (ui_callback_data_t)vice_int_to_ptr(i);
+    }
+    sid_profile_menu[i].string = NULL;
+
+    for (i = 0; (sid_c64_menu[i].data != (ui_callback_data_t)0xdeadc0de); ++i) {}
+    sid_c64_menu[i].data   = (ui_callback_data_t)sid_profile_menu;
+    for (i = 0; (sid_c128_menu[i].data != (ui_callback_data_t)0xdeadc0de); ++i) {}
+    sid_c128_menu[i].data  = (ui_callback_data_t)sid_profile_menu;
+    for (i = 0; (sid_cbm2_menu[i].data != (ui_callback_data_t)0xdeadc0de); ++i) {}
+    sid_cbm2_menu[i].data  = (ui_callback_data_t)sid_profile_menu;
+    for (i = 0; (sid_dtv_menu[i].data != (ui_callback_data_t)0xdeadc0de); ++i) {}
+    sid_dtv_menu[i].data   = (ui_callback_data_t)sid_profile_menu;
+    for (i = 0; (sid_vic_menu[i].data != (ui_callback_data_t)0xdeadc0de); ++i) {}
+    sid_vic_menu[i].data   = (ui_callback_data_t)sid_profile_menu;
+    for (i = 0; (sid_pet_menu[i].data != (ui_callback_data_t)0xdeadc0de); ++i) {}
+    sid_pet_menu[i].data   = (ui_callback_data_t)sid_profile_menu;
+    for (i = 0; (sid_plus4_menu[i].data != (ui_callback_data_t)0xdeadc0de); ++i) {}
+    sid_plus4_menu[i].data = (ui_callback_data_t)sid_profile_menu;
+#endif
 }
 
 /** \brief  Clean up memory used by the SID model menu
@@ -1058,4 +1446,9 @@ void uisid_menu_shutdown(void)
     if (sid_model_menu != NULL) {
         lib_free(sid_model_menu);
     }
+#ifdef HAVE_RESIDFP
+    if (sid_profile_menu != NULL) {
+        lib_free(sid_profile_menu);
+    }
+#endif
 }

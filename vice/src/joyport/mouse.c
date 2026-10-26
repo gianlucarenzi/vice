@@ -60,6 +60,7 @@
 #include "snapshot.h"
 
 #include "mouse_1351.h"
+#include "mouse_digital.h"
 #include "mouse_neos.h"
 #include "mouse_paddle.h"
 #include "mouse_quadrature.h"
@@ -90,6 +91,10 @@ int mouse_type = MOUSE_TYPE_PADDLE;
 /******************************************************************************/
 static float mouse_move_x = 0.0f;
 static float mouse_move_y = 0.0f;
+
+#ifdef USE_VICE_THREAD
+pthread_mutex_t mouse_lock = PTHREAD_MUTEX_INITIALIZER;
+#endif
 
 static int last_mouse_x = 0;
 static int last_mouse_y = 0;
@@ -134,11 +139,15 @@ int mouse_get_mouse_sy(void)
 /* this is called by the UI to move the mouse position */
 void mouse_move(float dx, float dy)
 {
+    MOUSE_LOCK();
+
     /* Capture the relative mouse movement to be processed later in mouse_poll() */
     mouse_move_x += dx;
     mouse_move_y -= dy;
     mouse_timestamp = tick_now();
     DBG(("mouse_move dx:%f dy:%f x:%f y:%f", dx, dy, mouse_move_x, mouse_move_y));
+
+    MOUSE_UNLOCK();
 }
 
 /* used by the individual devices to get the mouse position */
@@ -205,6 +214,8 @@ void mouse_poll(void)
 
     DBG(("mouse_poll"));
 
+    MOUSE_LOCK();
+
     /* Ensure the mouse hasn't moved too far since the last poll */
     mouse_move_apply_limit();
 
@@ -227,6 +238,7 @@ void mouse_poll(void)
     /* range of new_x and new_y are [0,63] */
     /* fetch now for both emu and os */
     os_now = mouse_timestamp;
+    MOUSE_UNLOCK();
     emu_now = maincpu_clk;
 
     /* update x-wheel until we're ahead */
@@ -371,6 +383,7 @@ void mouse_init(void)
 
 void mouse_shutdown(void)
 {
+    mousedrv_shutdown();
     smart_mouse_shutdown();
 }
 
@@ -381,6 +394,9 @@ static void mouse_button_left(int pressed)
 {
     DBG(("mouse_button_left %d type:%d\n", pressed, mouse_type));
     switch (mouse_type) {
+        case MOUSE_TYPE_DIGITAL:
+            mouse_digital_button_left(pressed);
+            break;
         case MOUSE_TYPE_1351:
         case MOUSE_TYPE_SMART:
         case MOUSE_TYPE_MICROMYS:
@@ -409,6 +425,9 @@ static void mouse_button_right(int pressed)
 {
     DBG(("mouse_button_right %d\n", pressed));
     switch (mouse_type) {
+        case MOUSE_TYPE_DIGITAL:
+            mouse_digital_button_right(pressed);
+            break;
         case MOUSE_TYPE_1351:
         case MOUSE_TYPE_SMART:
         case MOUSE_TYPE_MICROMYS:
@@ -485,6 +504,7 @@ static const mt_id_t mt_id[] = {
     { MOUSE_TYPE_MICROMYS, JOYPORT_ID_MOUSE_MICROMYS },
     { MOUSE_TYPE_KOALAPAD, JOYPORT_ID_KOALAPAD },
     { MOUSE_TYPE_POWERPAD, JOYPORT_ID_POWERPAD },
+    { MOUSE_TYPE_DIGITAL,  JOYPORT_ID_MOUSE_DIGITAL },
     { -1,                    -1 }
 };
 

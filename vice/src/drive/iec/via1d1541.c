@@ -194,7 +194,7 @@ static void undump_prb(via_context_t *via_context, uint8_t byte)
         *drive_data = ~byte;
         *drive_bus = ((((*drive_data) << 3) & 0x40)
                       | (((*drive_data) << 6)
-                         & ((~(*drive_data) ^ iecbus->cpu_bus) << 3) & 0x80));
+                         & ((uint32_t)(~(*drive_data) ^ iecbus->cpu_bus) << 3) & 0x80));
 
         iecbus->cpu_port = iecbus->cpu_bus;
         for (unit = 4; unit < 8 + NUM_DISK_UNITS; unit++) {
@@ -287,10 +287,11 @@ static void reset(via_context_t *via_context)
 {
 }
 
-static uint8_t read_pra(via_context_t *via_context, uint16_t addr)
+static uint8_t read_pra(via_context_t *via_context, uint16_t addr, bool peek_only)
 {
     uint8_t byte;
     drivevia1_context_t *via1p;
+    bool handshake;
 
     via1p = (drivevia1_context_t *)(via_context->prv);
 
@@ -298,7 +299,10 @@ static uint8_t read_pra(via_context_t *via_context, uint16_t addr)
         || via1p->diskunit->type == DRIVE_TYPE_1571
         || via1p->diskunit->type == DRIVE_TYPE_1571CR) {
         uint8_t tmp;
-        rotation_rotate_disk(via1p->drive);
+
+        if (!peek_only) {
+            rotation_rotate_disk(via1p->drive);
+        }
         tmp = (via1p->drive->byte_ready_level ? 0 : 0x80)
               | (via1p->drive->current_half_track == 2 ? 0 : 1);
         return (tmp & ~(via_context->via[VIA_DDRA]))
@@ -309,8 +313,13 @@ static uint8_t read_pra(via_context_t *via_context, uint16_t addr)
         case DRIVE_PC_STANDARD:
         case DRIVE_PC_21SEC_BACKUP:
         case DRIVE_PC_FORMEL64:
+            handshake = peek_only ? false :
+                        (((addr == VIA_PRA) &&
+                          (via_context->via[VIA_PCR] & 0xe) == 0xa)) ? true :
+                        false;
+
             byte = parallel_cable_drive_read(via1p->diskunit->parallel_cable,
-                                             (((addr == VIA_PRA) && (via_context->via[VIA_PCR] & 0xe) == 0xa)) ? 1 : 0);
+                                             handshake);
             break;
         default:
             byte = ((via_context->via[VIA_PRA] & via_context->via[VIA_DDRA])
@@ -321,23 +330,37 @@ static uint8_t read_pra(via_context_t *via_context, uint16_t addr)
     return byte;
 }
 
-static uint8_t read_prb(via_context_t *via_context)
+/*
+   Bit  7   |   ATN IN
+   Bits 6-5 |   Device address preset switches IN
+            |     00 = #8, 01 = #9, 10 = #10, 11 = #11
+   Bit  4   |   ATN acknowledge OUT
+   Bit  3   |   CLOCK OUT
+   Bit  2   |   CLOCK IN
+   Bit  1   |   DATA OUT
+   Bit  0   |   DATA IN
+
+   IN mask:     1110 0101   0xe5
+   OUT mask:    0001 1010   0x1a
+*/
+static uint8_t read_prb(via_context_t *via_context, bool peek_only)
 {
     uint8_t byte;
-    uint8_t orval;
+    uint8_t driveid;
     drivevia1_context_t *via1p;
 
     via1p = (drivevia1_context_t *)(via_context->prv);
 
-    /* 0 for drive0, 0x20 for drive 1 */
-    orval = (via1p->number << 5);
+    driveid = (via1p->number << 5) & 0x60;
 
     if (iecbus != NULL) {
-        byte = (((via_context->via[VIA_PRB] & 0x1a)
-                 | iecbus->drv_port) ^ 0x85) | orval;
+        uint8_t tmp = (iecbus->drv_port ^ 0x85) | 0x1a | driveid ;
+        byte = ((via_context->via[VIA_PRB] & via_context->via[VIA_DDRB])
+                | (tmp & ~(via_context->via[VIA_DDRB])));
     } else {
-        byte = (((via_context->via[VIA_PRB] & 0x1a)
-                 | iec_drive_read(via1p->number)) ^ 0x85) | orval;
+        uint8_t tmp = (iec_drive_read(via1p->number) ^ 0x85) | 0x1a | driveid;
+        byte = ((via_context->via[VIA_PRB] & via_context->via[VIA_DDRB])
+                | (tmp & ~(via_context->via[VIA_DDRB])));
     }
 
     DEBUG_IEC_DRV_READ(byte);

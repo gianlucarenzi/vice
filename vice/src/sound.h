@@ -89,7 +89,9 @@ enum {
     SOUND_5_DEVICES,
     SOUND_6_DEVICES,
     SOUND_7_DEVICES,
-    SOUND_8_DEVICES
+    SOUND_8_DEVICES,
+    SOUND_9_DEVICES,
+    SOUND_10_DEVICES
 };
 
 /* Sound channels */
@@ -112,17 +114,17 @@ enum {
 
 #define SOUND_OUTPUT_CHANNELS_MAX 2
 
-#define SOUND_CHIP_CHANNELS_MAX 8
+#define SOUND_CHIP_CHANNELS_MAX 10
 
 /** \brief  Maximum number of SIDs supported by the emulation.
  */
-#define SOUND_SIDS_MAX 8
+#define SOUND_SIDS_MAX 10
 
 /** \brief  Maximum number of SIDs supported by PSID files
  *
  * Maximum number of SIDs for .psid files and thus VSID.
  */
-#define SOUND_SIDS_MAX_PSID 3
+#define SOUND_SIDS_MAX_PSID 10
 
 #define SOUND_CHIPS_MAX 20
 
@@ -254,6 +256,7 @@ void sound_suspend(void);
 void sound_resume(void);
 int sound_open(void);
 void sound_close(void);
+bool sound_not_sensible_speed_to_play(void);
 void sound_set_relative_speed(int value);
 void sound_set_warp_mode(int value);
 void sound_set_machine_parameter(long clock_rate, long ticks_per_frame);

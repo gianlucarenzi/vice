@@ -33,6 +33,7 @@
 
 #include "c64cart.h"
 #include "c64mem.h"
+#include "c64model.h"
 #include "c64cartmem.h"
 #define CARTRIDGE_INCLUDE_SLOTMAIN_API
 #include "c64cartsystem.h"
@@ -1450,7 +1451,10 @@ void ramh_no_ultimax_store(uint16_t addr, uint8_t value)
     /* mem_store_without_romlh(addr, value); */
 }
 
-/* ultimax read - 0800 to 0fff (MAX-Machine only) */
+/* ultimax read - 0800 to 0fff (MAX-Machine only)
+    - MAX-Machine reads external (Cartridge) RAM here
+    - C64 reads regular (internal) RAM here
+*/
 uint8_t ultimax_0800_0fff_read(uint16_t addr)
 {
     /* "Main Slot" */
@@ -1467,7 +1471,10 @@ uint8_t ultimax_0800_0fff_read(uint16_t addr)
     return vicii_read_phi1();
 }
 
-/* ultimax store - 0800 to 0fff (MAX-Machine only) */
+/* ultimax store - 0800 to 0fff (MAX-Machine only)
+    - MAX-Machine writes external (Cartridge) RAM here
+    - C64 writes to regular (internal) RAM here
+*/
 void ultimax_0800_0fff_store(uint16_t addr, uint8_t value)
 {
     /* "Main Slot" */
@@ -1485,7 +1492,10 @@ void ultimax_0800_0fff_store(uint16_t addr, uint8_t value)
     /* default; no cart, open bus */
 }
 
-/* ultimax read - 1000 to 7fff */
+/* ultimax read - 1000 to 7fff
+    - MAX-Machine reads "open bus" here
+    - C64 reads "open bus" here
+*/
 static uint8_t ultimax_1000_7fff_read_slot1(uint16_t addr)
 {
     /* "Slot 1" */
@@ -1569,7 +1579,11 @@ uint8_t ultimax_1000_7fff_read(uint16_t addr)
     return ultimax_1000_7fff_read_slot1(addr);
 }
 
-/* ultimax store - 1000 to 7fff */
+/* ultimax store - 1000 to 7fff
+    - MAX-Machine writes to "open bus" here
+    - C64 writes to "open bus" here
+*/
+
 void ultimax_1000_7fff_store(uint16_t addr, uint8_t value)
 {
     DBG(("ultimax_1000_7fff_store()\n"));
@@ -1635,7 +1649,10 @@ void ultimax_1000_7fff_store(uint16_t addr, uint8_t value)
     /* default; no cart, open bus */
 }
 
-/* ultimax read - a000 to bfff */
+/* ultimax read - a000 to bfff
+    - MAX-Machine reads "open bus" here
+    - C64 reads "open bus" here
+*/
 static uint8_t ultimax_a000_bfff_read_slot1(uint16_t addr)
 {
     /* "Slot 1" */
@@ -1733,7 +1750,10 @@ uint8_t ultimax_a000_bfff_read(uint16_t addr)
     return ultimax_a000_bfff_read_slot1(addr);
 }
 
-/* ultimax store - a000 to bfff */
+/* ultimax store - a000 to bfff
+    - MAX-Machine writes to "open bus" here
+    - C64 writes to "open bus" here
+*/
 void ultimax_a000_bfff_store(uint16_t addr, uint8_t value)
 {
     /* "Slot 0" */
@@ -1798,7 +1818,10 @@ void ultimax_a000_bfff_store(uint16_t addr, uint8_t value)
     /* default; no cart, open bus */
 }
 
-/* ultimax read - c000 to cfff */
+/* ultimax read - c000 to cfff
+    - MAX-Machine reads "open bus" here
+    - C64 reads "open bus" here
+*/
 static uint8_t ultimax_c000_cfff_read_slot1(uint16_t addr)
 {
     /* "Slot 1" */
@@ -1873,7 +1896,10 @@ uint8_t ultimax_c000_cfff_read(uint16_t addr)
     return ultimax_c000_cfff_read_slot1(addr);
 }
 
-/* ultimax store - c000 to cfff */
+/* ultimax store - c000 to cfff
+    - MAX-Machine writes to "open bus" here
+    - C64 writes to "open bus" here
+*/
 void ultimax_c000_cfff_store(uint16_t addr, uint8_t value)
 {
     /* "Slot 0" */
@@ -1924,7 +1950,10 @@ void ultimax_c000_cfff_store(uint16_t addr, uint8_t value)
     /* default; no cart, open bus */
 }
 
-/* ultimax read - d000 to dfff */
+/* ultimax read - d000 to dfff
+    - MAX Machine reads I/O and colorram here
+    - C64 reads I/O and colorram here
+*/
 static uint8_t ultimax_d000_dfff_read_slot1(uint16_t addr)
 {
     /* "Slot 1" */
@@ -1990,7 +2019,10 @@ uint8_t ultimax_d000_dfff_read(uint16_t addr)
     return ultimax_d000_dfff_read_slot1(addr);
 }
 
-/* ultimax store - d000 to dfff */
+/* ultimax store - d000 to dfff
+    - MAX Machine writes to I/O and colorram here
+    - C64 writes to I/O and colorram here
+*/
 void ultimax_d000_dfff_store(uint16_t addr, uint8_t value)
 {
     /* "Slot 0" */
@@ -2042,13 +2074,165 @@ void ultimax_d000_dfff_store(uint16_t addr, uint8_t value)
 /*
     VIC-II reads from cart memory
 
-    most carts can simply wrap to ultimax_romh_read_hirom here, only
-    those that handle the vic accesses differently than cpu accesses
-    must provide their own functions.
+    NOTE: the called functions have to decode the address
 
     FIXME: lots of testing needed!
 */
 
+extern int board_type;
+
+/* $0000 - $07ff
+    - the MAX-Machine reads internal RAM here
+    - C64 reads RAM here
+*/
+
+/* VICII cycle $0000 - $07ff */
+int ultimax_0000_07ff_phi1_read(uint16_t addr, uint8_t *value)
+{
+    int res = CART_READ_THROUGH;
+
+    switch (mem_cartridge_type) {
+        default:
+            break;
+    }
+
+    return res;
+}
+
+/* CPU cycle $0000 - $07ff */
+int ultimax_0000_07ff_phi2_read(uint16_t addr, uint8_t *value)
+{
+    int res = CART_READ_THROUGH;
+
+    switch (mem_cartridge_type) {
+        default:
+            break;
+    }
+
+    return res;
+}
+
+/* $0800 - $0fff
+    - the MAX-Machine reads external (cartridge) RAM here
+    - C64 reads internal RAM here
+*/
+
+/* VICII phi1 RAM $0800-$0fff (?) */
+int ultimax_ram_phi1_read(uint16_t addr, uint8_t *value)
+{
+    if (board_type != BOARD_MAX) {
+        return CART_READ_THROUGH;
+    }
+
+    switch (mem_cartridge_type) {
+        case CARTRIDGE_ULTIMAX:
+            /* fall through */
+        default:
+            break;
+        case CARTRIDGE_MAX_BASIC:
+            /* fall through */
+        case CARTRIDGE_MULTIMAX:
+            *value = ultimax_0800_0fff_read(addr);
+            return CART_READ_VALID;
+    }
+
+    return CART_READ_THROUGH;
+}
+
+/* VICII phi2 RAM $0800-$0fff (?) */
+int ultimax_ram_phi2_read(uint16_t addr, uint8_t *value)
+{
+    if (board_type != BOARD_MAX) {
+        return CART_READ_THROUGH;
+    }
+
+    switch (mem_cartridge_type) {
+        case CARTRIDGE_ULTIMAX:
+            /* fall through */
+        default:
+            break;
+        case CARTRIDGE_MAX_BASIC:
+            /* fall through */
+        case CARTRIDGE_MULTIMAX:
+            *value = ultimax_0800_0fff_read(addr);
+            return CART_READ_VALID;
+    }
+
+    return CART_READ_THROUGH;
+}
+
+/* $1000 - $1fff
+    - the MAX-Machine reads "open bus" here
+    - C64 reads RAM here
+*/
+
+/* VICII cycle 1000 - 1fff */
+int ultimax_chargen_phi1_read(uint16_t addr, uint8_t *value)
+{
+    int res = CART_READ_THROUGH;
+
+    switch (mem_cartridge_type) {
+        default:
+            break;
+    }
+
+    return res;
+}
+
+/* CPU cycle 1000 - 1fff */
+int ultimax_chargen_phi2_read(uint16_t addr, uint8_t *value)
+{
+    int res = CART_READ_THROUGH;
+
+    switch (mem_cartridge_type) {
+        default:
+            break;
+    }
+
+    return res;
+}
+
+/* $2000 - $2fff
+    - the MAX-Machine reads "open bus" here
+    - C64 reads RAM here
+*/
+
+/* VICII cycle $2000 - $2fff */
+int ultimax_2000_2fff_phi1_read(uint16_t addr, uint8_t *value)
+{
+    int res = CART_READ_THROUGH;
+
+    switch (mem_cartridge_type) {
+        default:
+            break;
+    }
+
+    return res;
+}
+
+/* CPU cycle $2000 - $2fff */
+int ultimax_2000_2fff_phi2_read(uint16_t addr, uint8_t *value)
+{
+    int res = CART_READ_THROUGH;
+
+    switch (mem_cartridge_type) {
+        default:
+            break;
+    }
+
+    return res;
+}
+
+/* $3000-$3fff
+    - the MAX-Machine reads ROMH here
+    - C64 reads ROMH here
+
+    most carts can simply wrap to ultimax_romh_read_hirom here, only
+    those that handle the vic accesses differently than cpu accesses
+    must provide their own functions.
+*/
+
+/* VICII cycle ROMH $3000-$3fff */
 static int ultimax_romh_phi1_read_slotmain(uint16_t addr, uint8_t *value)
 {
     int res = CART_READ_THROUGH;
@@ -2056,7 +2240,7 @@ static int ultimax_romh_phi1_read_slotmain(uint16_t addr, uint8_t *value)
     switch (mem_cartridge_type) {
         case CARTRIDGE_GENERIC_8KB:
         case CARTRIDGE_GENERIC_16KB:
-            return 0;
+            return CART_READ_THROUGH;   /* FIXME */
         case CARTRIDGE_ULTIMAX:
             res = generic_romh_phi1_read(addr, value);
             break;
@@ -2096,24 +2280,27 @@ static int ultimax_romh_phi1_read_slotmain(uint16_t addr, uint8_t *value)
         default:
             /* generic fallback */
             *value = ultimax_romh_read_hirom(addr);
-            return 1;
+            return CART_READ_VALID; /* FIXME */
     }
-
+#if 0
     switch (res) {
         case CART_READ_VALID:
-            return 1;
+            return CART_READ_VALID;
         case CART_READ_C64MEM:
             /* fake ultimax hack, c64 basic, ram */
-            return 0;
+            return CART_READ_THROUGH;   /* FIXME */
         case CART_READ_THROUGH_NO_ULTIMAX:
             break;
     }
 
     /* default; no cart, open bus */
     *value = vicii_read_phi1();
-    return 1;
+    return CART_READ_VALID;    /* FIXME */
+#endif
+    return res;
 }
 
+/* VICII cycle ROMH $3000-$3fff */
 static int ultimax_romh_phi1_read_slot1(uint16_t addr, uint8_t *value)
 {
     int res = CART_READ_THROUGH;
@@ -2122,18 +2309,18 @@ static int ultimax_romh_phi1_read_slot1(uint16_t addr, uint8_t *value)
 
     if (expert_cart_enabled()) {
         if ((res = expert_romh_phi1_read(addr, value)) == CART_READ_VALID) {
-            return 1;
+            return CART_READ_VALID;
         }
     } else if (isepic_cart_enabled()) {
         if ((res = isepic_romh_phi1_read(addr, value)) == CART_READ_VALID) {
-            return 1;
+            return CART_READ_VALID;
         }
     }
 
     switch (res) {
         case CART_READ_C64MEM:
             /* fake ultimax hack, c64 basic, ram */
-            return 0;
+            return CART_READ_THROUGH;   /* FIXME */
         case CART_READ_THROUGH_NO_ULTIMAX:
             break;
     }
@@ -2142,6 +2329,7 @@ static int ultimax_romh_phi1_read_slot1(uint16_t addr, uint8_t *value)
     return ultimax_romh_phi1_read_slotmain(addr, value);
 }
 
+/* VICII cycle ROMH $3000-$3fff */
 int ultimax_romh_phi1_read(uint16_t addr, uint8_t *value)
 {
     int res = CART_READ_THROUGH;
@@ -2150,23 +2338,23 @@ int ultimax_romh_phi1_read(uint16_t addr, uint8_t *value)
 
     if (magicvoice_cart_enabled()) {
         if ((res = magicvoice_romh_phi1_read(addr, value)) == CART_READ_VALID) {
-            return 1;
+            return CART_READ_VALID;
         }
     }
     if (ieeeflash64_cart_enabled()) {
         if ((res = ieeeflash64_romh_phi1_read(addr, value)) == CART_READ_VALID) {
-            return 1;
+            return CART_READ_VALID;
         }
     }
     if (ramlink_cart_enabled()) {
         if ((res = ramlink_romh_phi1_read(addr, value)) == CART_READ_VALID) {
-            return 1;
+            return CART_READ_VALID;
         }
     }
 
     switch (res) {
         case CART_READ_C64MEM:
-            return 0;
+            return CART_READ_THROUGH;   /* FIXME */
         case CART_READ_THROUGH_NO_ULTIMAX:
             break;
     }
@@ -2175,6 +2363,7 @@ int ultimax_romh_phi1_read(uint16_t addr, uint8_t *value)
     return ultimax_romh_phi1_read_slot1(addr, value);
 }
 
+/* CPU cycle ROMH $3000-$3fff */
 static int ultimax_romh_phi2_read_slotmain(uint16_t addr, uint8_t *value)
 {
     int res = CART_READ_THROUGH;
@@ -2182,7 +2371,7 @@ static int ultimax_romh_phi2_read_slotmain(uint16_t addr, uint8_t *value)
     switch (mem_cartridge_type) {
         case CARTRIDGE_GENERIC_8KB:
         case CARTRIDGE_GENERIC_16KB:
-            return 0;
+            return CART_READ_THROUGH;   /* FIXME */
         case CARTRIDGE_ULTIMAX:
             res = generic_romh_phi2_read(addr, value);
             break;
@@ -2222,24 +2411,27 @@ static int ultimax_romh_phi2_read_slotmain(uint16_t addr, uint8_t *value)
         default:
             /* generic fallback */
             *value = ultimax_romh_read_hirom(addr);
-            return 1;
+            return CART_READ_VALID;   /* FIXME */
     }
-
+#if 0
     switch (res) {
         case CART_READ_VALID:
-            return 1;
+            return CART_READ_VALID;
         case CART_READ_C64MEM:
             /* fake ultimax hack, c64 basic, ram */
-            return 0;
+            return CART_READ_THROUGH;   /* FIXME */
         case CART_READ_THROUGH_NO_ULTIMAX:
             break;
     }
 
     /* default; no cart, open bus */
     *value = vicii_read_phi1();
-    return 1;
+    return CART_READ_VALID;   /* FIXME */
+#endif
+    return res;
 }
 
+/* CPU cycle ROMH $3000-$3fff */
 static int ultimax_romh_phi2_read_slot1(uint16_t addr, uint8_t *value)
 {
     int res = CART_READ_THROUGH;
@@ -2248,18 +2440,18 @@ static int ultimax_romh_phi2_read_slot1(uint16_t addr, uint8_t *value)
 
     if (expert_cart_enabled()) {
         if ((res = expert_romh_phi2_read(addr, value)) == CART_READ_VALID) {
-            return 1;
+            return CART_READ_VALID;
         }
     } else if (isepic_cart_enabled()) {
         if ((res = isepic_romh_phi2_read(addr, value)) == CART_READ_VALID) {
-            return 1;
+            return CART_READ_VALID;
         }
     }
 
     switch (res) {
         case CART_READ_C64MEM:
             /* fake ultimax hack, c64 basic, ram */
-            return 0;
+            return CART_READ_THROUGH;   /* FIXME */
         case CART_READ_THROUGH_NO_ULTIMAX:
             break;
     }
@@ -2268,6 +2460,7 @@ static int ultimax_romh_phi2_read_slot1(uint16_t addr, uint8_t *value)
     return ultimax_romh_phi2_read_slotmain(addr, value);
 }
 
+/* CPU cycle ROMH $3000-$3fff */
 int ultimax_romh_phi2_read(uint16_t addr, uint8_t *value)
 {
     int res = CART_READ_THROUGH;
@@ -2276,24 +2469,24 @@ int ultimax_romh_phi2_read(uint16_t addr, uint8_t *value)
 
     if (magicvoice_cart_enabled()) {
         if ((res = magicvoice_romh_phi2_read(addr, value)) == CART_READ_VALID) {
-            return 1;
+            return CART_READ_VALID;
         }
     }
     if (ieeeflash64_cart_enabled()) {
         if ((res = ieeeflash64_romh_phi2_read(addr, value)) == CART_READ_VALID) {
-            return 1;
+            return CART_READ_VALID;
         }
     }
     if (ramlink_cart_enabled()) {
         if ((res = ramlink_romh_phi2_read(addr, value)) == CART_READ_VALID) {
-            return 1;
+            return CART_READ_VALID;
         }
     }
 
     switch (res) {
         case CART_READ_C64MEM:
             /* fake ultimax hack, c64 basic, ram */
-            return 0;
+            return CART_READ_THROUGH;   /* FIXME */
         case CART_READ_THROUGH_NO_ULTIMAX:
             break;
     }

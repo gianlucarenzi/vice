@@ -58,6 +58,7 @@ char *alloca();
 #include "mon_disassemble.h"
 #include "mon_drive.h"
 #include "mon_file.h"
+#include "mon_input.h"
 #include "mon_memmap.h"
 #include "mon_memory.h"
 #include "mon_register.h"
@@ -153,6 +154,7 @@ void set_yydebug(int val);
 %token CMD_ATTACH CMD_DETACH CMD_MON_RESET CMD_TAPECTRL CMD_TAPEOFFS CMD_CARTFREEZE CMD_UPDB CMD_JPDB
 %token CMD_CPUHISTORY CMD_MEMMAPZAP CMD_MEMMAPSHOW CMD_MEMMAPSAVE
 %token CMD_COMMENT CMD_LIST CMD_STOPWATCH RESET
+%token CMD_KEYMATRIX CMD_JOYSTICK KEY_RESTORE
 %token CMD_EXPORT CMD_AUTOSTART CMD_AUTOLOAD CMD_MAINCPU_TRACE
 %token CMD_WARP
 %token CMD_PROFILE FLAT GRAPH FUNC DEPTH DISASS PROFILE_CONTEXT CLEAR
@@ -595,14 +597,42 @@ monitor_misc_rules: CMD_DISK rest_of_line end_cmd
                     { mon_cart_freeze(); }
                   | CMD_UPDB number end_cmd
                     { mon_userport_set_output($2); }
+                  | CMD_UPDB end_cmd
+                    { mon_userport_get_output(); }
                   | CMD_JPDB number number end_cmd
                     { mon_joyport_set_output($2, $3); }
+                  | CMD_JPDB number end_cmd
+                    { mon_joyport_get_output($2); }
+                  | CMD_KEYMATRIX end_cmd
+                    { mon_keymatrix_show(); }
+                  | CMD_KEYMATRIX CLEAR end_cmd
+                    { mon_keymatrix_clear(); }
+                  | CMD_KEYMATRIX number number end_cmd
+                    { mon_keymatrix_set($2, $3, e_ON, 0); }
+                  | CMD_KEYMATRIX number number number end_cmd
+                    { mon_keymatrix_set($2, $3, e_ON, $4); }
+                  | CMD_KEYMATRIX number number TOGGLE end_cmd
+                    { mon_keymatrix_set($2, $3, $4, 0); }
+                  | CMD_KEYMATRIX KEY_RESTORE end_cmd
+                    { mon_keymatrix_restore(e_ON, 0); }
+                  | CMD_KEYMATRIX KEY_RESTORE number end_cmd
+                    { mon_keymatrix_restore(e_ON, $3); }
+                  | CMD_KEYMATRIX KEY_RESTORE TOGGLE end_cmd
+                    { mon_keymatrix_restore($3, 0); }
+                  | CMD_JOYSTICK end_cmd
+                    { mon_joystick_show(); }
+                  | CMD_JOYSTICK CLEAR end_cmd
+                    { mon_joystick_clear(); }
+                  | CMD_JOYSTICK number number end_cmd
+                    { mon_joystick_set($2, $3, 0); }
+                  | CMD_JOYSTICK number number number end_cmd
+                    { mon_joystick_set($2, $3, $4); }
                   | CMD_COMMENT opt_rest_of_line end_cmd
                      { }
                   | CMD_STOPWATCH RESET end_cmd
                      { mon_stopwatch_reset(); }
                   | CMD_STOPWATCH end_cmd
-                     { mon_stopwatch_show("Stopwatch: ", "\n"); }
+                     { mon_stopwatch_show(default_memspace, "Stopwatch: ", "\n"); }
                   | CMD_PROFILE TOGGLE end_cmd
                      { mon_profile_action($2); }
                   | CMD_PROFILE end_cmd
@@ -1220,7 +1250,9 @@ int parse_and_execute_line(char *input)
         * If the command is to be executed when the default address space is the main cpu,
         * Ensure drive CPU emulation is up to date with main cpu CLOCK.
         */
-       drive_cpu_execute_all(maincpu_clk);
+       /* FIXME: should this be drive_catch_up_hook() instead? */
+       /*drive_cpu_execute_all(maincpu_clk);*/
+       drive_catch_up_hook(maincpu_clk);
    }
 
    temp_buf = lib_malloc(strlen(input) + 3);
@@ -1232,7 +1264,7 @@ int parse_and_execute_line(char *input)
 
    make_buffer(temp_buf);
    mon_clear_buffer();
-   if ( (rc =yyparse()) != 0) {
+   if ((rc = yyparse()) != 0) {
        mon_out("ERROR -- ");
        switch(rc) {
          case ERR_BAD_CMD:
@@ -1285,8 +1317,9 @@ int parse_and_execute_line(char *input)
            mon_out("Wrong syntax:\n");
        }
        mon_out("  %s\n", input);
-       for (i = 0; i < last_len; i++)
+       for (i = 0; i < last_len; i++) {
            mon_out(" ");
+       }
        mon_out("  ^\n");
        asm_mode = 0;
        new_cmd = 1;

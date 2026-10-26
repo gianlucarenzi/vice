@@ -55,6 +55,7 @@
 #include "mon_memmap.h"
 #include "mon_breakpoint.h"
 #include "mon_file.h"
+#include "mon_input.h"
 #include "mon_register.h"
 
 #include "version.h"
@@ -105,6 +106,7 @@ enum t_binary_command {
     e_MON_CMD_ADVANCE_INSTRUCTIONS = 0x71,
     e_MON_CMD_KEYBOARD_FEED = 0x72,
     e_MON_CMD_EXECUTE_UNTIL_RETURN = 0x73,
+    e_MON_CMD_KEYMATRIX_SET = 0x74,
 
     e_MON_CMD_PING = 0x81,
     e_MON_CMD_BANKS_AVAILABLE = 0x82,
@@ -116,6 +118,7 @@ enum t_binary_command {
     e_MON_CMD_PALETTE_GET = 0x91,
 
     e_MON_CMD_JOYPORT_SET = 0xa2,
+    e_MON_CMD_JOYSTICK_SET = 0xa3,
 
     e_MON_CMD_USERPORT_SET = 0xb2,
 
@@ -154,6 +157,7 @@ enum t_binary_response {
     e_MON_RESPONSE_ADVANCE_INSTRUCTIONS = 0x71,
     e_MON_RESPONSE_KEYBOARD_FEED = 0x72,
     e_MON_RESPONSE_EXECUTE_UNTIL_RETURN = 0x73,
+    e_MON_RESPONSE_KEYMATRIX_SET = 0x74,
 
     e_MON_RESPONSE_PING = 0x81,
     e_MON_RESPONSE_BANKS_AVAILABLE = 0x82,
@@ -165,6 +169,7 @@ enum t_binary_response {
     e_MON_RESPONSE_PALETTE_GET = 0x91,
 
     e_MON_RESPONSE_JOYPORT_SET = 0xa2,
+    e_MON_RESPONSE_JOYSTICK_SET = 0xa3,
 
     e_MON_RESPONSE_USERPORT_SET = 0xb2,
 
@@ -309,6 +314,7 @@ static unsigned char *write_uint32(uint32_t input, unsigned char *output) {
     return output + 4;
 }
 
+#ifdef FEATURE_CPUMEMHISTORY
 /*! \internal \brief Write uint64 to buffer and return pointer to byte after */
 static unsigned char *write_uint64(uint64_t input, unsigned char *output) {
     for (int i = 0 ; i < 8 ; i++) {
@@ -317,6 +323,7 @@ static unsigned char *write_uint64(uint64_t input, unsigned char *output) {
 
     return output + 8;
 }
+#endif
 
 /*! \internal \brief Write string to buffer and return pointer to byte after */
 static unsigned char *write_string(uint8_t length, unsigned char *input, unsigned char *output) {
@@ -759,6 +766,46 @@ static void monitor_binary_process_keyboard_feed(binary_command_t *command)
     kbdbuf_feed((char *)&body[1]);
 
     monitor_binary_response(0, e_MON_RESPONSE_KEYBOARD_FEED, e_MON_ERR_OK, command->request_id, NULL);
+}
+
+/* row value selecting the RESTORE key instead of a matrix position */
+#define BINARY_KEYMATRIX_ROW_RESTORE 0xff
+
+static void monitor_binary_process_keymatrix_set(binary_command_t *command)
+{
+    unsigned char *body = command->body;
+    int ret;
+    uint8_t row;
+    uint8_t col;
+    uint8_t state;
+    uint16_t frames;
+
+    if (command->length < 5) {
+        monitor_binary_error(e_MON_ERR_CMD_INVALID_LENGTH, command->request_id);
+        return;
+    }
+
+    row = body[0];
+    col = body[1];
+    state = body[2];
+    frames = little_endian_to_uint16(&body[3]);
+
+    if (state > 1) {
+        monitor_binary_error(e_MON_ERR_INVALID_PARAMETER, command->request_id);
+        return;
+    }
+
+    if (row == BINARY_KEYMATRIX_ROW_RESTORE) {
+        ret = mon_keymatrix_restore(state ? e_ON : e_OFF, (int)frames);
+    } else {
+        ret = mon_keymatrix_set((int)row, (int)col, state ? e_ON : e_OFF, (int)frames);
+    }
+    if (ret < 0) {
+        monitor_binary_error(e_MON_ERR_INVALID_PARAMETER, command->request_id);
+        return;
+    }
+
+    monitor_binary_response(0, e_MON_RESPONSE_KEYMATRIX_SET, e_MON_ERR_OK, command->request_id, NULL);
 }
 
 static void monitor_binary_process_execute_until_return(binary_command_t *command)
@@ -1269,11 +1316,24 @@ static void monitor_binary_process_display_get(binary_command_t *command)
     screenshot.height = screenshot.last_displayed_line - screenshot.first_displayed_line + 1;
     screenshot.y_offset = screenshot.first_displayed_line;
 
-    buffer_length = screenshot.debug_width * screenshot.debug_height * depth / 8;
-    response_length = 4 + info_length + buffer_length;
+    buffer_length = (screenshot.debug_width * screenshot.debug_height) * (depth / 8);
+    response_length = (4 + 4) + info_length + buffer_length;
     response = lib_malloc(response_length);
     response_cursor = response;
+/*
+    4 FL: 4 bytes: Length of the fields before the display buffer (DW...BP)
 
+    2 DW: 2 bytes: Debug width of display buffer (uncropped) The largest width the screen gets.
+    2 DH: 2 bytes: Debug height of display buffer (uncropped) Rhe largest height the screen gets.
+    2 XO: 2 bytes: X offset  X offset to the inner part of the screen.
+    2 YO: 2 bytes: Y offset  Y offset to the inner part of the screen.
+    2 IW: 2 bytes: Width of the inner part of the screen.
+    2 IH: 2 bytes: Height of the inner part of the screen.
+    1 BP: 1 byte: Bits per pixel of display buffer (=8)
+
+    4 BL: 4 bytes: Length of display buffer
+    followed by display buffer, debug width * debug height bytes
+*/
     /* Length of fields before display buffer */
     response_cursor = write_uint32(info_length, response_cursor);
 
@@ -1302,7 +1362,6 @@ static void monitor_binary_process_display_get(binary_command_t *command)
         screenshot.convert_line(&screenshot, response_cursor, i, format);
         response_cursor += screenshot.debug_width * depth / 8;
     }
-
     monitor_binary_response(response_length, e_MON_RESPONSE_DISPLAY_GET, e_MON_ERR_OK, command->request_id, response);
 
     lib_free(response);
@@ -1395,6 +1454,30 @@ static void monitor_binary_process_joyport_set(binary_command_t *command)
     }
 
     monitor_binary_response(0, e_MON_RESPONSE_JOYPORT_SET, e_MON_ERR_OK, command->request_id, NULL);
+}
+
+static void monitor_binary_process_joystick_set(binary_command_t *command)
+{
+    unsigned char *body = command->body;
+    uint8_t port;
+    uint16_t value;
+    uint16_t frames;
+
+    if (command->length < 5) {
+        monitor_binary_error(e_MON_ERR_CMD_INVALID_LENGTH, command->request_id);
+        return;
+    }
+
+    port = body[0];
+    value = little_endian_to_uint16(&body[1]);
+    frames = little_endian_to_uint16(&body[3]);
+
+    if (mon_joystick_set((int)port, (int)value, (int)frames) < 0) {
+        monitor_binary_error(e_MON_ERR_INVALID_PARAMETER, command->request_id);
+        return;
+    }
+
+    monitor_binary_response(0, e_MON_RESPONSE_JOYSTICK_SET, e_MON_ERR_OK, command->request_id, NULL);
 }
 
 static void monitor_binary_process_userport_set(binary_command_t *command)
@@ -1759,7 +1842,9 @@ static void monitor_binary_process_command(unsigned char * pbuffer)
     }
 
     /* Ensure drive CPU emulation is up to date with main cpu CLOCK. */
-    drive_cpu_execute_all(maincpu_clk);
+    /* FIXME: should this be drive_catch_up_hook() instead? */
+    /*drive_cpu_execute_all(maincpu_clk);*/
+    drive_catch_up_hook(maincpu_clk);
 
     command.length = little_endian_to_uint32(&pbuffer[2]);
 
@@ -1811,12 +1896,16 @@ static void monitor_binary_process_command(unsigned char * pbuffer)
         monitor_binary_process_keyboard_feed(&command);
     } else if (command_type == e_MON_CMD_EXECUTE_UNTIL_RETURN) {
         monitor_binary_process_execute_until_return(&command);
+    } else if (command_type == e_MON_CMD_KEYMATRIX_SET) {
+        monitor_binary_process_keymatrix_set(&command);
 
     } else if (command_type == e_MON_CMD_PALETTE_GET) {
         monitor_binary_process_palette_get(&command);
 
     } else if (command_type == e_MON_CMD_JOYPORT_SET) {
         monitor_binary_process_joyport_set(&command);
+    } else if (command_type == e_MON_CMD_JOYSTICK_SET) {
+        monitor_binary_process_joystick_set(&command);
 
     } else if (command_type == e_MON_CMD_USERPORT_SET) {
         monitor_binary_process_userport_set(&command);

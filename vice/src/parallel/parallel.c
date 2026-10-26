@@ -57,7 +57,6 @@
 #include "resources.h"
 #include "types.h"
 
-#define DEBUG_PARALLEL  1
 #ifdef DEBUG_PARALLEL
 #define DBG(x) log_printf  x
 #else
@@ -770,7 +769,7 @@ const drivefunc_context_t drive_funcs[NUM_DISK_UNITS] = {
 #define PARALLEL_CPU_SET_LINE(line, dev, mask)     \
     void parallel_##dev##_set_##line(char val)     \
     {                                              \
-        drive_cpu_execute_all(maincpu_clk);         \
+        drive_catch_up_hook(maincpu_clk);          \
         if (val) {                                 \
             parallel_set_##line(PARALLEL_##mask);  \
         } else {                                   \
