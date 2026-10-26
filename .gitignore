@@ -1633,3 +1633,34 @@
 /vice/depcomp
 /vice/missing
 /vice/ylwrap
+
+# Generic autotools/libtool build products (cover directories added by upstream merges)
+Makefile
+Makefile.in
+.deps/
+.libs/
+.dirstamp
+*.lo
+*.la
+*~
+autom4te.cache/
+config.log
+config.status
+libtool
+.aclocal.out
+.autoconf.out
+.autoheader.out
+.automake.out
+
+# libresidfp (bundled, has its own configure)
+/vice/src/lib/libresidfp/aclocal.m4
+/vice/src/lib/libresidfp/configure
+/vice/src/lib/libresidfp/Doxyfile
+/vice/src/lib/libresidfp/libresidfp.pc
+/vice/src/lib/libresidfp/src/siddefs-fp.h
+/vice/src/lib/libresidfp/src/residfp/sidversion.h
+
+# Generated documentation
+/vice/doc/html/*.snapshots.texi
+/vice/doc/html/snapshots.texi
+/vice/doc/html/snapshots.log
