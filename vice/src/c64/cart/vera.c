@@ -475,6 +475,32 @@ static int set_vera_debug_level(int val, void *param)
     return 0;
 }
 
+/* VERARenderer: 0 exact, 1 fast, 2 auto (vera_video.h VERA_RENDER_*) */
+static int vera_renderer = VERA_RENDER_AUTO;
+
+static int set_vera_renderer(int val, void *param)
+{
+    if (val < VERA_RENDER_EXACT || val > VERA_RENDER_AUTO) {
+        return -1;
+    }
+    vera_renderer = val;
+    VERA_VIDEO_SetRenderer(val);
+    return 0;
+}
+
+static int cmdline_vera_renderer(const char *value, void *extra_param)
+{
+    static const char *const names[] = { "exact", "fast", "auto" };
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        if (strcmp(value, names[i]) == 0) {
+            return resources_set_int("VERARenderer", i);
+        }
+    }
+    return -1;
+}
+
 static const resource_string_t resources_string[] = {
     { "VERASDCardImage", "", RES_EVENT_NO, NULL,
       &vera_sdcard_name, set_vera_sdcard_name, NULL },
@@ -490,6 +516,8 @@ static const resource_int_t resources_int[] = {
       &vera_psg_volume, set_vera_psg_volume, NULL },
     { "VERADebugLevel", 0, RES_EVENT_NO, NULL,
       &vera_debug_level, set_vera_debug_level, NULL },
+    { "VERARenderer", VERA_RENDER_AUTO, RES_EVENT_NO, NULL,
+      &vera_renderer, set_vera_renderer, NULL },
     RESOURCE_INT_LIST_END
 };
 
@@ -528,6 +556,9 @@ static const cmdline_option_t cmdline_options[] =
     { "-veradebuglevel", SET_RESOURCE, CMDLINE_ATTRIB_NEED_ARGS,
       NULL, NULL, "VERADebugLevel", NULL,
       "<Level>", "Log level of the VERA emulation (0: errors, 1: events, 2: every register access)" },
+    { "-verarenderer", CALL_FUNCTION, CMDLINE_ATTRIB_NEED_ARGS,
+      cmdline_vera_renderer, NULL, NULL, NULL,
+      "<exact|fast|auto>", "VERA picture: exact = every line of every frame rendered as the chip does; fast = lines kept until something they show changes; auto (default) = exact while it costs at most half a frame on this PC and the emulator keeps up with real time, else fast (tried again every 10 s)" },
     CMDLINE_LIST_END
 };
 
